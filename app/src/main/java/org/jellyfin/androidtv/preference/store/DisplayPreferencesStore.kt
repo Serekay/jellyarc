@@ -17,7 +17,7 @@ import timber.log.Timber
 @Suppress("TooManyFunctions")
 abstract class DisplayPreferencesStore(
 	protected var displayPreferencesId: String,
-	protected var app: String = "jellyfin-androidtv",
+	protected var app: String = "jellyarc-androidtv",
 	private val api: ApiClient,
 ) : AsyncPreferenceStore<Unit, Unit>() {
 	private var displayPreferencesDto: DisplayPreferencesDto? = null

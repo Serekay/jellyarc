@@ -49,10 +49,10 @@ jobs:
       - name: Prepare release archive
         run: |
           mkdir -p build/jellyfin-publish
-          mv app/build/outputs/apk/*/jellyfin-androidtv-*-debug.apk build/jellyfin-publish/
-          mv app/build/outputs/apk/*/jellyfin-androidtv-*-release-unsigned.apk build/jellyfin-publish/
-          mv ${{ steps.signApk.outputs.signedReleaseFile }} build/jellyfin-publish/jellyfin-androidtv-v${{ env.JELLYFIN_VERSION }}-release.apk
-          mv ${{ steps.signAab.outputs.signedReleaseFile }} build/jellyfin-publish/jellyfin-androidtv-v${{ env.JELLYFIN_VERSION }}-release.aab
+          mv app/build/outputs/apk/*/jellyarc-androidtv-*-debug.apk build/jellyfin-publish/
+          mv app/build/outputs/apk/*/jellyarc-androidtv-*-release-unsigned.apk build/jellyfin-publish/
+          mv ${{ steps.signApk.outputs.signedReleaseFile }} build/jellyfin-publish/jellyarc-androidtv-v${{ env.JELLYFIN_VERSION }}-release.apk
+          mv ${{ steps.signAab.outputs.signedReleaseFile }} build/jellyfin-publish/jellyarc-androidtv-v${{ env.JELLYFIN_VERSION }}-release.aab
           mv app/build/version.txt build/jellyfin-publish/
       - name: Upload release archive to GitHub release
         uses: alexellis/upload-assets@13926a61cdb2cb35f5fdef1c06b8b591523236d3 # 0.4.1
@@ -84,5 +84,5 @@ jobs:
             sudo mv /srv/incoming/androidtv/v${{ env.JELLYFIN_VERSION }} /srv/repository/main/client/androidtv/versions/v${{ env.JELLYFIN_VERSION }}
             cd /srv/repository/main/client/androidtv;
             sudo rm -rf *.apk version.txt;
-            sudo ln -s versions/v${JELLYFIN_VERSION}/jellyfin-androidtv-v${JELLYFIN_VERSION}-*.apk .;
+            sudo ln -s versions/v${JELLYFIN_VERSION}/jellyarc-androidtv-v${JELLYFIN_VERSION}-*.apk .;
             sudo ln -s versions/v${JELLYFIN_VERSION}/version.txt .;

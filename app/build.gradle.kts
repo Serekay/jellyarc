@@ -7,16 +7,19 @@ plugins {
 }
 
 android {
-	// Use a distinct namespace/applicationId so this APK installs side-by-side with the official app
-	namespace = "org.jellyfin.androidtv.jellyseerr"
+	// Keep original namespace for R/BuildConfig
+	namespace = "org.jellyfin.androidtv"
+
+	// Distinct app id for side-by-side install
+	val releaseAppId = "org.jellyarc.androidtv"
 	compileSdk = libs.versions.android.compileSdk.get().toInt()
 
 	defaultConfig {
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
 
-		// Release version
-		applicationId = namespace
+		// Release version: use distinct applicationId for parallel install
+		applicationId = releaseAppId
 		versionName = project.getVersionName()
 		versionCode = getVersionCode(versionName!!)
 	}
@@ -31,14 +34,28 @@ android {
 		isCoreLibraryDesugaringEnabled = true
 	}
 
+	signingConfigs {
+		// Use debug keystore for release to simplify sideloading (non-Play builds)
+		getByName("debug") {
+			// default debug signing
+		}
+		create("release") {
+			storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+			storePassword = "android"
+			keyAlias = "androiddebugkey"
+			keyPassword = "android"
+		}
+	}
+
 	buildTypes {
 		release {
+			signingConfig = signingConfigs.getByName("release")
 			proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
 
 			// Set package names used in various XML files
-			resValue("string", "app_id", namespace!!)
-			resValue("string", "app_search_suggest_authority", "${namespace}.content")
-			resValue("string", "app_search_suggest_intent_data", "content://${namespace}.content/intent")
+			resValue("string", "app_id", releaseAppId)
+			resValue("string", "app_search_suggest_authority", "${releaseAppId}.content")
+			resValue("string", "app_search_suggest_intent_data", "content://${releaseAppId}.content/intent")
 
 			// Set flavored application name
 			resValue("string", "app_name", "@string/app_name_release")
@@ -51,9 +68,9 @@ android {
 			applicationIdSuffix = ".debug"
 
 			// Set package names used in various XML files
-			resValue("string", "app_id", namespace + applicationIdSuffix)
-			resValue("string", "app_search_suggest_authority", "${namespace + applicationIdSuffix}.content")
-			resValue("string", "app_search_suggest_intent_data", "content://${namespace + applicationIdSuffix}.content/intent")
+			resValue("string", "app_id", releaseAppId + applicationIdSuffix)
+			resValue("string", "app_search_suggest_authority", "${releaseAppId + applicationIdSuffix}.content")
+			resValue("string", "app_search_suggest_intent_data", "content://${releaseAppId + applicationIdSuffix}.content/intent")
 
 			// Set flavored application name
 			resValue("string", "app_name", "@string/app_name_debug")
@@ -74,7 +91,7 @@ android {
 	}
 }
 
-base.archivesName.set("jellyseerr-tv-v${project.getVersionName()}")
+base.archivesName.set("jellyarc-tv-v${project.getVersionName()}")
 
 tasks.register("versionTxt") {
 	val path = layout.buildDirectory.asFile.get().resolve("version.txt")

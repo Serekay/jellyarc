@@ -39,6 +39,7 @@ Client-side integration that brings Jellyseerr discovery and requests into Jelly
 ## Optional: Remote Access with Tailscale (VPN)
 
 Use Tailscale to reach your Jellyfin server without opening ports.
+- If your Jellyfin server runs in Docker/Unraid, make sure Tailscale is already set up in your stack (see https://tailscale.com/kb/1153/docker for a quick guide).
 
 ### Desktop/Laptop without sharing credentials
 1. Install Tailscale.
@@ -46,8 +47,16 @@ Use Tailscale to reach your Jellyfin server without opening ports.
 3. Send the login link shown to the Tailscale admin; the admin authorizes the device.
 
 ### Android TV setup
-1. Install Tailscale from the Play Store on the TV and log in (a code is shown; authorize in the admin console).
-2. In the Jellyfin app, add the server using the Tailscale IP (e.g., `http://100.x.x.x:8096`) and sign in.
+1. Install Tailscale on the TV  
+   - Play Store → search “Tailscale” → install.
+2. Start Tailscale and show the code  
+   - Open the app → tap “Log in” → note the 6-digit code.
+3. Authorize from a PC/phone  
+   - Go to https://login.tailscale.com/admin/machines → “Add device” → enter the code.
+4. Sign in with your Tailscale account (Google / Microsoft / GitHub).
+5. Verify connection  
+   - When Tailscale shows “Connected”, you are good to go.
+6. In the Jellyfin app, add the server using the Tailscale IP (e.g., `http://100.x.x.x:8096`) and sign in.
 
 ### Always-On via ADB (keeps VPN alive after reboot, other apps stay local)
 1. Install “ADB TV”/“ADB Shell” on the TV.

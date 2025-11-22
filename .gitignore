@@ -7,3 +7,6 @@ local.properties
 .kotlin/
 build/
 captures/
+dist/
+*.ps1
+COMMANDS.md

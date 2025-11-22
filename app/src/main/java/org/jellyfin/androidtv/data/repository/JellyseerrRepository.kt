@@ -1,6 +1,7 @@
 package org.jellyfin.androidtv.data.repository
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -18,8 +19,10 @@ import org.jellyfin.androidtv.util.apiclient.itemImages
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.exception.ApiClientException
 import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.api.client.util.AuthorizationHeaderBuilder
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.request.GetItemsRequest
+import org.json.JSONObject
 import timber.log.Timber
 
 private const val TMDB_POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
@@ -43,90 +46,34 @@ private fun companyLogoImageUrl(path: String?): String? =
 
 // Genre color mapping (dark, light) - matches Jellyseerr
 private val genreColorMap: Map<Int, Pair<String, String>> = mapOf(
-	0 to Pair("030712", "6B7280"),     // Default (black/gray)
-	28 to Pair("991B1B", "FCA5A5"),    // Action (red)
-	12 to Pair("581C87", "D8B4FE"),    // Adventure (dark purple)
-	16 to Pair("1E3A8A", "93C5FD"),    // Animation (blue)
-	35 to Pair("9A3412", "FDBA74"),    // Comedy (orange)
-	80 to Pair("1E3A8A", "93C5FD"),    // Crime (dark blue)
-	99 to Pair("166534", "86EFAC"),    // Documentary (light green)
-	18 to Pair("831843", "FBCFE8"),    // Drama (pink)
-	10751 to Pair("854D0E", "FDE047"), // Family (yellow)
-	14 to Pair("0E7490", "67E8F9"),    // Fantasy (light blue)
-	36 to Pair("9A3412", "FDBA74"),    // History (orange)
-	27 to Pair("030712", "6B7280"),    // Horror (black)
-	10402 to Pair("1E3A8A", "93C5FD"), // Music (blue)
-	9648 to Pair("6B21A8", "C4B5FD"),  // Mystery (purple)
-	10749 to Pair("831843", "FBCFE8"), // Romance (pink)
-	878 to Pair("0E7490", "67E8F9"),   // Science Fiction (light blue)
-	10770 to Pair("991B1B", "FCA5A5"), // TV Movie (red)
-	53 to Pair("030712", "6B7280"),    // Thriller (black)
-	10752 to Pair("7F1D1D", "FCA5A5"), // War (dark red)
-	37 to Pair("9A3412", "FDBA74"),    // Western (orange)
-	10759 to Pair("581C87", "D8B4FE"), // Action & Adventure (dark purple)
-	10762 to Pair("1E3A8A", "93C5FD"), // Kids (blue)
-	10763 to Pair("030712", "6B7280"), // News (black)
-	10764 to Pair("7C2D12", "FED7AA"), // Reality (dark orange)
-	10765 to Pair("0E7490", "67E8F9"), // Sci-Fi & Fantasy (light blue)
-	10766 to Pair("831843", "FBCFE8"), // Soap (pink)
-	10767 to Pair("166534", "86EFAC"), // Talk (light green)
-	10768 to Pair("7F1D1D", "FCA5A5"), // War & Politics (dark red)
-)
-
-interface JellyseerrRepository {
-	suspend fun search(query: String): Result<List<JellyseerrSearchItem>>
-	suspend fun getOwnRequests(): Result<List<JellyseerrRequest>>
-	suspend fun getRecentRequests(): Result<List<JellyseerrSearchItem>>
-	suspend fun createRequest(item: JellyseerrSearchItem, seasons: List<Int>? = null): Result<Unit>
-	suspend fun discoverTrending(page: Int = 1): Result<List<JellyseerrSearchItem>>
-	suspend fun discoverMovies(page: Int = 1): Result<List<JellyseerrSearchItem>>
-	suspend fun discoverTv(page: Int = 1): Result<List<JellyseerrSearchItem>>
-	suspend fun discoverUpcomingMovies(page: Int = 1): Result<List<JellyseerrSearchItem>>
-	suspend fun discoverUpcomingTv(page: Int = 1): Result<List<JellyseerrSearchItem>>
-	suspend fun discoverMoviesByGenre(genreId: Int, page: Int = 1): Result<JellyseerrGenreDiscovery>
-	suspend fun discoverTvByGenre(genreId: Int, page: Int = 1): Result<JellyseerrGenreDiscovery>
-	suspend fun discoverMoviesByStudio(studioId: Int, page: Int = 1): Result<JellyseerrCompanyDiscovery>
-	suspend fun discoverTvByNetwork(networkId: Int, page: Int = 1): Result<JellyseerrCompanyDiscovery>
-	suspend fun getMovieDetails(tmdbId: Int): Result<JellyseerrMovieDetails>
-	suspend fun getTvDetails(tmdbId: Int): Result<JellyseerrMovieDetails>
-	suspend fun getSeasonEpisodes(tmdbId: Int, seasonNumber: Int): Result<List<JellyseerrEpisode>>
-	suspend fun cancelRequest(requestId: Int): Result<Unit>
-	suspend fun markAvailableInJellyfin(items: List<JellyseerrSearchItem>): Result<List<JellyseerrSearchItem>>
-	suspend fun getPersonDetails(personId: Int): Result<JellyseerrPersonDetails>
-    suspend fun getPersonCredits(personId: Int): Result<List<JellyseerrSearchItem>>
-	suspend fun getMovieGenres(): Result<List<JellyseerrGenreSlider>>
-	suspend fun getTvGenres(): Result<List<JellyseerrGenreSlider>>
-}
-
-// Genre für Slider/Cards mit Backdrop-Bild
-data class JellyseerrGenreSlider(
-	val id: Int,
-	val name: String,
-	val backdropUrl: String?,
-)
-
-data class JellyseerrCompany(
-	val id: Int,
-	val name: String,
-	val logoUrl: String? = null,
-	val homepage: String? = null,
-	val description: String? = null,
-)
-
-data class JellyseerrSearchItem(
-	val id: Int,
-	val mediaType: String,
-	val title: String,
-	val overview: String?,
-	val posterPath: String? = null,
-	val backdropPath: String? = null,
-	val releaseDate: String? = null,
-	val isRequested: Boolean = false,
-	val isAvailable: Boolean = false,
-	val isPartiallyAvailable: Boolean = false,
-	val requestId: Int? = null,
-	val requestStatus: Int? = null,
-	val jellyfinId: String? = null,
+	0 to Pair("030712", "6B7280"),
+	28 to Pair("991B1B", "FCA5A5"),
+	12 to Pair("581C87", "D8B4FE"),
+	16 to Pair("1E3A8A", "93C5FD"),
+	35 to Pair("9A3412", "FDBA74"),
+	80 to Pair("1E3A8A", "93C5FD"),
+	99 to Pair("166534", "86EFAC"),
+	18 to Pair("831843", "FBCFE8"),
+	10751 to Pair("854D0E", "FDE047"),
+	14 to Pair("0E7490", "67E8F9"),
+	36 to Pair("9A3412", "FDBA74"),
+	27 to Pair("030712", "6B7280"),
+	10402 to Pair("1E3A8A", "93C5FD"),
+	9648 to Pair("6B21A8", "C4B5FD"),
+	10749 to Pair("831843", "FBCFE8"),
+	878 to Pair("0E7490", "67E8F9"),
+	10770 to Pair("991B1B", "FCA5A5"),
+	53 to Pair("030712", "6B7280"),
+	10752 to Pair("7F1D1D", "FCA5A5"),
+	37 to Pair("9A3412", "FDBA74"),
+	10759 to Pair("581C87", "D8B4FE"),
+	10762 to Pair("1E3A8A", "93C5FD"),
+	10763 to Pair("030712", "6B7280"),
+	10764 to Pair("7C2D12", "FED7AA"),
+	10765 to Pair("0E7490", "67E8F9"),
+	10766 to Pair("831843", "FBCFE8"),
+	10767 to Pair("166534", "86EFAC"),
+	10768 to Pair("7F1D1D", "FCA5A5"),
 )
 
 @Serializable
@@ -182,6 +129,9 @@ private data class JellyseerrSearchItemDto(
 	val overview: String? = null,
 	val posterPath: String? = null,
 	val backdropPath: String? = null,
+	val profilePath: String? = null,
+	val releaseDate: String? = null,
+	val firstAirDate: String? = null,
 	val mediaInfo: JellyseerrMediaInfoDto? = null,
 )
 
@@ -191,6 +141,7 @@ private data class JellyseerrMediaInfoDto(
 	val status: Int? = null,
 	val status4k: Int? = null,
 	val jellyfinMediaId: String? = null,
+	val jellyfinMediaId4k: String? = null,
 )
 
 @Serializable
@@ -204,174 +155,6 @@ private data class JellyseerrUser(
 	val username: String? = null,
 	val jellyfinUsername: String? = null,
 	val jellyfinUserId: String? = null,
-)
-
-@Serializable
-data class JellyseerrRequestPage(
-	val results: List<JellyseerrRequestDto>,
-)
-
-@Serializable
-data class JellyseerrRequestDto(
-	val id: Int,
-	val status: Int? = null,
-	val type: String? = null,
-	val media: JellyseerrMediaDto? = null,
-)
-
-@Serializable
-data class JellyseerrMediaDto(
-	val tmdbId: Int? = null,
-	val mediaType: String? = null,
-	val title: String? = null,
-	val name: String? = null,
-	val posterPath: String? = null,
-	val backdropPath: String? = null,
-)
-
-@Serializable
-data class JellyseerrPersonDetails(
-    val id: Int,
-    val name: String,
-    val birthday: String? = null,
-    val deathday: String? = null,
-    val knownForDepartment: String? = null,
-    val alsoKnownAs: List<String> = emptyList(),
-    val gender: Int? = null,
-    val biography: String? = null,
-    val popularity: Double? = null,
-    val placeOfBirth: String? = null,
-    val profilePath: String? = null,
-    val adult: Boolean? = null,
-    val imdbId: String? = null,
-    val homepage: String? = null,
-)
-
-@Serializable
-private data class JellyseerrPersonCredit(
-    val id: Int,
-    val mediaType: String? = null,
-    val overview: String? = null,
-    val posterPath: String? = null,
-    val backdropPath: String? = null,
-    val title: String? = null,
-    val name: String? = null,
-    val adult: Boolean? = null,
-)
-
-@Serializable
-private data class JellyseerrCombinedCredits(
-    val id: Int,
-    val cast: List<JellyseerrPersonCredit> = emptyList(),
-    val crew: List<JellyseerrPersonCredit> = emptyList(),
-)
-
-@Serializable
-private data class JellyseerrGenreSliderItem(
-	val id: Int,
-	val name: String,
-	val backdrops: List<String> = emptyList(),
-)
-
-data class JellyseerrRequest(
-	val id: Int,
-	val status: Int?,
-	val mediaType: String?,
-	val title: String,
-	val tmdbId: Int?,
-	val posterPath: String? = null,
-	val backdropPath: String? = null,
-)
-
-@Serializable
-private data class JellyseerrCreateRequestBody(
-	val mediaType: String,
-	@SerialName("mediaId")
-	val mediaId: Int,
-	val userId: Int,
-	val seasons: List<Int>? = null,
-)
-
-@Serializable
-data class JellyseerrGenre(
-	val id: Int,
-	val name: String,
-)
-
-data class JellyseerrGenreDiscovery(
-	val genre: JellyseerrGenre,
-	val results: List<JellyseerrSearchItem>,
-	val page: Int,
-	val totalPages: Int,
-	val totalResults: Int,
-)
-
-data class JellyseerrCompanyDiscovery(
-	val company: JellyseerrCompany,
-	val results: List<JellyseerrSearchItem>,
-	val page: Int,
-	val totalPages: Int,
-	val totalResults: Int,
-)
-
-@Serializable
-data class JellyseerrCast(
-	val id: Int,
-	val castId: Int? = null,
-	val character: String? = null,
-	val creditId: String? = null,
-	val gender: Int? = null,
-	val name: String,
-	val order: Int? = null,
-	val profilePath: String? = null,
-)
-
-@Serializable
-data class JellyseerrCredits(
-	val cast: List<JellyseerrCast> = emptyList(),
-)
-
-@Serializable
-data class JellyseerrSeason(
-	val id: Int,
-	val name: String? = null,
-	val overview: String? = null,
-	val posterPath: String? = null,
-	val seasonNumber: Int,
-	val episodeCount: Int? = null,
-	val airDate: String? = null,
-	val status: Int? = null,
-)
-
-data class JellyseerrEpisode(
-	val id: Int,
-	val name: String? = null,
-	val overview: String? = null,
-	val imageUrl: String? = null,
-	val episodeNumber: Int? = null,
-	val seasonNumber: Int? = null,
-	val airDate: String? = null,
-	val isMissing: Boolean = false,
-	val isAvailable: Boolean = false,
-	val jellyfinId: String? = null,
-)
-
-@Serializable
-data class JellyseerrMovieDetails(
-	val id: Int,
-	val title: String? = null,
-	val name: String? = null,
-	val originalTitle: String? = null,
-	val overview: String? = null,
-	val posterPath: String? = null,
-	val backdropPath: String? = null,
-	val releaseDate: String? = null,
-	val firstAirDate: String? = null,
-	val runtime: Int? = null,
-	val voteAverage: Double? = null,
-	val genres: List<JellyseerrGenre> = emptyList(),
-	val credits: JellyseerrCredits? = null,
-	val seasons: List<JellyseerrSeason> = emptyList(),
 )
 
 class JellyseerrRepositoryImpl(
@@ -418,17 +201,21 @@ class JellyseerrRepositoryImpl(
 	private val json = Json {
 		ignoreUnknownKeys = true
 	}
+	@Volatile
+	private var cachedConfig: Config? = null
 
 private fun mapSearchItemDtoToModel(dto: JellyseerrSearchItemDto): JellyseerrSearchItem {
-	val posterUrl = posterImageUrl(dto.posterPath)
+	val posterUrl = posterImageUrl(dto.posterPath) ?: profileImageUrl(dto.profilePath)
 	val backdropUrl = backdropImageUrl(dto.backdropPath)
+	val profileUrl = profileImageUrl(dto.profilePath)
+	val releaseDate = dto.releaseDate ?: dto.firstAirDate
 
 		// Status aus mediaInfo extrahieren (von Jellyseerr)
 		// Status 5 = Available, Status 4 = Partially Available
 		val status = dto.mediaInfo?.status
 		val isAvailable = status == 5
 		val isPartiallyAvailable = status == 4
-		val jellyfinId = dto.mediaInfo?.jellyfinMediaId
+		val jellyfinId = dto.mediaInfo?.jellyfinMediaId ?: dto.mediaInfo?.jellyfinMediaId4k
 
 		return JellyseerrSearchItem(
 			id = dto.id,
@@ -437,6 +224,8 @@ private fun mapSearchItemDtoToModel(dto: JellyseerrSearchItemDto): JellyseerrSea
 			overview = dto.overview,
 			posterPath = posterUrl,
 			backdropPath = backdropUrl,
+			profilePath = profileUrl,
+			releaseDate = releaseDate,
 			isAvailable = isAvailable,
 			isPartiallyAvailable = isPartiallyAvailable,
 			jellyfinId = jellyfinId,
@@ -457,13 +246,94 @@ private fun mapCompanyDtoToModel(dto: JellyseerrCompanyDto): JellyseerrCompany =
 	private var cachedUserId: Int? = null
 
 	private fun getConfig(): Config? {
+		cachedConfig?.let { return it }
+
 		val url = userPreferences[UserPreferences.jellyseerrUrl].trim()
 		val apiKey = userPreferences[UserPreferences.jellyseerrApiKey].trim()
 
-		if (url.isBlank() || apiKey.isBlank()) return null
+		if (url.isNotBlank() && apiKey.isNotBlank()) {
+			return Config(url.trimEnd('/'), apiKey).also { cachedConfig = it }
+		}
 
-		val baseUrl = url.trimEnd('/')
-		return Config(baseUrl, apiKey)
+		// Fallback: try to fetch config from Jellyfin via the Requests Bridge plugin
+		val fetched = runBlocking { fetchBridgeConfig().getOrNull() }
+		if (fetched != null) {
+			userPreferences[UserPreferences.jellyseerrUrl] = fetched.baseUrl
+			userPreferences[UserPreferences.jellyseerrApiKey] = fetched.apiKey
+			cachedConfig = fetched
+		}
+
+		return cachedConfig
+	}
+
+	override suspend fun ensureConfig(): Result<Unit> = withContext(Dispatchers.IO) {
+		if (getConfig() != null) return@withContext Result.success(Unit)
+		fetchBridgeConfig().map { Unit }
+	}
+
+	private suspend fun fetchBridgeConfig(): Result<Config> = withContext(Dispatchers.IO) {
+		val jellyfinBase = apiClient.baseUrl?.trimEnd('/')
+			?: return@withContext Result.failure(IllegalStateException("No Jellyfin server configured"))
+		val token = apiClient.accessToken?.takeIf { it.isNotBlank() }
+			?: return@withContext Result.failure(IllegalStateException("No Jellyfin access token"))
+
+		val authorization = AuthorizationHeaderBuilder.buildHeader(
+			apiClient.clientInfo.name,
+			apiClient.clientInfo.version,
+			apiClient.deviceInfo.id,
+			apiClient.deviceInfo.name,
+			token,
+		)
+
+		fun Request.Builder.addAuth(): Request.Builder = header("Authorization", authorization)
+
+		val baseResult = runCatching {
+			val request = Request.Builder()
+				.url("$jellyfinBase/plugins/requests/apibase")
+				.addAuth()
+				.build()
+
+			client.newCall(request).execute().use { response ->
+				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+				val normalized = body.trimStart().removePrefix("\uFEFF")
+				val jsonObj = JSONObject(normalized)
+				val success = jsonObj.optBoolean("success", false)
+				val apiBase = jsonObj.optString("apiBase").trim()
+				if (!success || apiBase.isBlank()) {
+					throw IllegalStateException("Jellyseerr base URL not configured in Requests Bridge")
+				}
+				apiBase.trimEnd('/')
+			}
+		}
+
+		if (baseResult.isFailure) return@withContext Result.failure(baseResult.exceptionOrNull()!!)
+
+		val apiBase = baseResult.getOrThrow()
+
+		val keyResult = runCatching {
+			val request = Request.Builder()
+				.url("$jellyfinBase/plugins/requests/apikey")
+				.addAuth()
+				.build()
+
+			client.newCall(request).execute().use { response ->
+				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+				val normalized = body.trimStart().removePrefix("\uFEFF")
+				val jsonObj = JSONObject(normalized)
+				val success = jsonObj.optBoolean("success", false)
+				val apiKey = jsonObj.optString("apiKey").trim()
+				if (!success || apiKey.isBlank()) {
+					throw IllegalStateException("Jellyseerr API key not configured in Requests Bridge")
+				}
+				apiKey
+			}
+		}
+
+		if (keyResult.isFailure) return@withContext Result.failure(keyResult.exceptionOrNull()!!)
+
+		Result.success(Config(apiBase, keyResult.getOrThrow()))
 	}
 
 	private suspend fun resolveCurrentUserId(config: Config): Result<Int> = withContext(Dispatchers.IO) {
@@ -581,18 +451,20 @@ private fun mapCompanyDtoToModel(dto: JellyseerrCompanyDto): JellyseerrCompany =
 			}
 		}
 
-	override suspend fun search(query: String): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
-		val config = getConfig()
-			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+override suspend fun search(query: String, page: Int): Result<JellyseerrSearchResult> = withContext(Dispatchers.IO) {
+	val config = getConfig()
+		?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-		if (query.isBlank()) return@withContext Result.success(emptyList())
+	if (query.isBlank()) return@withContext Result.success(JellyseerrSearchResult(emptyList(), 1, 1, 0))
 
-		val encodedQuery = java.net.URLEncoder.encode(query, Charsets.UTF_8.name())
-		val url = "${config.baseUrl}/api/v1/search?query=$encodedQuery&page=1"
+	val encodedQuery = java.net.URLEncoder.encode(query, Charsets.UTF_8.name())
+	val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+	val url = "${config.baseUrl}/api/v1/search?query=$encodedQuery&page=$page"
 
 		val request = Request.Builder()
 			.url(url)
 			.header("X-API-Key", config.apiKey)
+			.header("X-API-User", userId.toString())
 			.build()
 
 		runCatching {
@@ -602,9 +474,16 @@ private fun mapCompanyDtoToModel(dto: JellyseerrCompanyDto): JellyseerrCompany =
 				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
 				val result = json.decodeFromString(JellyseerrSearchResponse.serializer(), body)
 
-				result.results
-					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
+				val supportedTypes = setOf("movie", "tv", "person", "collection")
+				val mappedResults = result.results
+					.filter { it.mediaType in supportedTypes }
 					.map { mapSearchItemDtoToModel(it) }
+				JellyseerrSearchResult(
+					results = mappedResults,
+					page = result.page,
+					totalPages = result.totalPages,
+					totalResults = result.totalResults,
+				)
 			}
 		}.onFailure {
 			Timber.e(it, "Failed to search Jellyseerr")

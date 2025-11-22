@@ -1,83 +1,67 @@
 # Jellyfin Jellyseerr TV Integration
 
-This repository provides the client-side integration to bring the full power of Jellyseerr directly to your Android TV via Jellyfin.
+Client-side integration that brings Jellyseerr discovery and requests into Jellyfin for Android TV.
 
-## ⚠️ Prerequisite: Server-Side Plugin (Required!)
-
-**Before you start:** This Android TV integration requires the **Jellyfin Requests Bridge** plugin to be installed and configured on your Jellyfin server. Without it, the "Discover" features will not work.
-
-👉 **Step 1: Install the Server Plugin first:**
-[**Go to Serekay/jellyfin-requests-bridge**](https://github.com/Serekay/jellyfin-requests-bridge)
-
-Follow the installation instructions there. Once the plugin is running on your server, proceed with the setup below.
+## Prerequisite: Server Plugin (Required)
+- Install and configure **Jellyfin Requests Bridge** on your Jellyfin server first, otherwise the Jellyseerr discovery/request features will not work.
+- Plugin repo: https://github.com/Serekay/jellyfin-requests-bridge
 
 ---
 
-<details>
-<summary><h2>🌐 Bonus: Remote Access via Tailscale (Optional)</h2>
-(Click to expand the setup guide for secure remote access)
-</summary>
+## Install the Android TV APK (Sideload)
 
-[cite_start]This guide explains how to set up **Tailscale** to access your Jellyfin server securely from anywhere, without opening ports on your router[cite: 4].
+### Option A: Directly on the TV with a browser (e.g., BrowseHere)
+1. Open a browser on the TV (e.g., **BrowseHere**).
+2. Go to the releases: https://github.com/Serekay/jellyfin-jellyserr-tv/releases
+3. Download the latest `app-release.apk`.
+4. After download, open the APK and confirm installation (enable “Unknown sources” if prompted).
+5. If you see “App not installed”: check free storage on the TV, free up space if needed, and try again.
 
-### 💻 For Desktop PC / Laptop Users
-**How to connect without sharing your account credentials:**
+### Option B: File transfer with CX File Explorer (FTP)
+1. On the TV: install CX File Explorer and start its built-in FTP server (note the FTP address).
+2. On the PC: open that FTP address in Windows Explorer.
+3. Copy `app-release.apk` to a folder on the TV.
+4. On the TV: in CX File Explorer, navigate to the copied APK and install.
+5. If “App not installed” appears: check the TV’s free storage and retry.
 
-[cite_start]If you want to give a friend or family member access on their computer without giving them your Tailscale username and password[cite: 4]:
+### Option C: Classic transfer (USB / “Send Files to TV” / similar)
+1. Put the APK on a USB stick or send it via “Send Files to TV”.
+2. Use a file manager on the TV to open and install the APK.
+3. Enable “Unknown sources” in the TV security settings if required.
 
-1. Install Tailscale on the target computer.
-2. Open the Command Prompt (CMD) or Terminal.
-3. [cite_start]Type: `tailscale up` and press Enter[cite: 4].
-4. A login link will appear in the terminal. **Send this link to the Tailscale Admin.**
-5. The Admin opens the link to authorize the device. [cite_start]The user gets connected immediately without ever seeing the login credentials[cite: 4].
+### After installation
+1. Start the app.
+2. Connect to your Jellyfin server.
+3. Enjoy the Jellyseerr discover/request features.
 
 ---
 
-### 📺 For Android TV Users (Setup Guide)
+## Optional: Remote Access with Tailscale (VPN)
 
-[cite_start]We will configure an **"Always-On"** feature using ADB, ensuring the VPN starts automatically after a restart while allowing other apps (Netflix, YouTube) to bypass the VPN[cite: 3, 4].
+Use Tailscale to reach your Jellyfin server without opening ports.
 
-#### Step 1: Install & Connect Tailscale on TV
-1. [cite_start]**Download App:** Go to the Google Play Store on your TV and install **"Tailscale"**[cite: 8].
-2. **Log In:** Open the app and select **"Log in"**. [cite_start]A code will appear[cite: 10].
-3. **Authorize Device:**
-   - [cite_start]Go to the [Tailscale Admin Console](https://login.tailscale.com/admin/machines) on your phone/PC[cite: 12].
-   - [cite_start]Click **"Add Device"** and enter the code displayed on the TV[cite: 12].
-4. [cite_start]**Verify:** The TV app should say "Connected"[cite: 16].
+### Desktop/Laptop without sharing credentials
+1. Install Tailscale.
+2. In Terminal/CMD: `tailscale up`.
+3. Send the login link shown to the Tailscale admin; the admin authorizes the device.
 
-#### Step 2: Connect Jellyfin
-1. [cite_start]Install the **Jellyfin** app on your TV[cite: 19].
-2. [cite_start]Enter the **Tailscale IP address** of your server (e.g., `http://100.x.x.x:8096`)[cite: 22].
-3. [cite_start]Login with your Jellyfin credentials[cite: 24].
+### Android TV setup
+1. Install Tailscale from the Play Store on the TV and log in (a code is shown; authorize in the admin console).
+2. In the Jellyfin app, add the server using the Tailscale IP (e.g., `http://100.x.x.x:8096`) and sign in.
 
-#### Step 3: Enable "Always-On" Auto-Connect (ADB Method)
-By default, Android TV might close the VPN after a reboot. [cite_start]We use **ADB TV** to fix this[cite: 3, 26].
-
-**How this works:**
-* [cite_start]**Auto-Start:** Tailscale connects silently in the background on boot[cite: 40].
-* [cite_start]**Split Tunneling:** Only Jellyfin traffic uses the VPN[cite: 42]. [cite_start]**Netflix, YouTube, etc., continue to use your normal home internet**, ensuring no speed loss or geo-blocking issues[cite: 4, 43].
-
-**Instructions:**
-
-1. [cite_start]**Install ADB TV:** Search for "ADB TV" (or "ADB Shell") in the TV Play Store and install it[cite: 28].
-2. **Enable Developer Options:**
-   - [cite_start]Go to TV Settings → Device Preferences → About[cite: 31].
-   - [cite_start]Click the **"Build Number" 7 times** until it says "You are a developer"[cite: 3, 31].
-3. **Enable USB Debugging:**
-   - [cite_start]Go to Settings → Device Preferences → Developer Options[cite: 32].
-   - [cite_start]Turn **ON** "USB Debugging"[cite: 2, 33].
-4. **Run Commands:**
-   - [cite_start]Open the **ADB TV** app[cite: 36].
-   - Enter these two commands (run them one by one):
-
-   **Command 1 (Set Tailscale as Always-On VPN):**
+### Always-On via ADB (keeps VPN alive after reboot, other apps stay local)
+1. Install “ADB TV”/“ADB Shell” on the TV.
+2. Enable developer options (Settings → Device → About → tap “Build number” 7×), then enable USB debugging.
+3. In ADB TV run, one by one:
    ```bash
    settings put secure always_on_vpn_app com.tailscale.ipn
-    ```
+   settings put secure always_on_vpn_lockdown 0
+   ```
+4. Restart the TV. Tailscale connects automatically; Netflix/YouTube remain outside the VPN (lockdown=0).
 
-    **Command 2 (Disable Lockdown - allows other apps to use normal internet):**
-    ```bash
-    settings put secure always_on_vpn_lockdown 0
-    ```
+---
 
-✅ Done! Restart your TV. Tailscale will now run automatically in the background.
+## Tips
+- Keep the server plugin updated.
+- “App not installed” is often low storage; free space and retry.
+- “Unknown sources” may need to be enabled per app/source on some TVs.

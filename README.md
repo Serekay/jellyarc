@@ -67,6 +67,7 @@ Use Tailscale to reach your Jellyfin server without opening ports.
    settings put secure always_on_vpn_lockdown 0
    ```
 4. Restart the TV. Tailscale connects automatically; Netflix/YouTube remain outside the VPN (lockdown=0).
+   - Why only Jellyfin goes through the VPN: with `always_on_vpn_lockdown` set to `0`, Android allows non-VPN traffic. Your Jellyfin app uses the Tailscale IP of the server (100.x.x.x), so that traffic is routed via the VPN interface. Other apps keep using the normal LAN/WAN route, so your TV’s general traffic is not tunneled just the Jellyfin App.
 
 ---
 

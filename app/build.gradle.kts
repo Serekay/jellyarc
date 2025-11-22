@@ -7,7 +7,8 @@ plugins {
 }
 
 android {
-	namespace = "org.jellyfin.androidtv"
+	// Use a distinct namespace/applicationId so this APK installs side-by-side with the official app
+	namespace = "org.jellyfin.androidtv.jellyseerr"
 	compileSdk = libs.versions.android.compileSdk.get().toInt()
 
 	defaultConfig {
@@ -73,7 +74,7 @@ android {
 	}
 }
 
-base.archivesName.set("jellyfin-androidtv-v${project.getVersionName()}")
+base.archivesName.set("jellyseerr-tv-v${project.getVersionName()}")
 
 tasks.register("versionTxt") {
 	val path = layout.buildDirectory.asFile.get().resolve("version.txt")

@@ -632,9 +632,9 @@
     <string name="jellyseerr_update_check_summary">Check for a newer JellyArc TV release on GitHub.</string>
     <string name="jellyseerr_update_available_toast">Update available: v%1$s</string>
     <string name="jellyseerr_update_current_toast">You already have the latest version.</string>
-    <string name="jellyseerr_update_downloading">Downloading update…</string>
+    <string name="jellyseerr_update_downloading">Downloading update.</string>
     <string name="jellyseerr_update_download_failed">Could not download update. Please check your internet connection and your free disk space. Try again later if necessary.</string>
-    <string name="jellyseerr_update_launch_installer">Opening installer…</string>
+    <string name="jellyseerr_update_launch_installer">Opening installer.</string>
     <string name="jellyseerr_update_install_failed">Could not open installer. Please try again.</string>
     <string name="jellyseerr_update_permission_required">Allow installation from this app in system settings to continue.</string>
     <string name="jellyseerr_update_checking">Checking for updates…</string>
@@ -644,7 +644,7 @@
     <string name="jellyseerr_update_current_message">You already have the latest version.</string>
     <string name="jellyseerr_update_error_title">Update Error</string>
     <string name="jellyseerr_update_check_failed">Failed to check for updates. Please try again later.</string>
-    <string name="jellyseerr_update_installing">Installing update…</string>
+    <string name="jellyseerr_update_installing">Installing update.</string>
     <string name="jellyseerr_update_installing_message">Please wait while the installer is being prepared.</string>
     <string name="jellyseerr_update_install_button">Install</string>
 </resources>

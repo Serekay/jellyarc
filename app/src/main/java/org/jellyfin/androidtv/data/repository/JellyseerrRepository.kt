@@ -1482,32 +1482,53 @@ private data class JellyseerrEpisodeRaw(
 						val mediaInfo = partObj["mediaInfo"]?.jsonObject
 						val jellyfinId = mediaInfo?.get("jellyfinMediaId")?.jsonPrimitive?.contentOrNull
 
-						// Status can be on mediaInfo.status or inside mediaInfo.requests[x].status
+						// Status can live on mediaInfo.status, mediaInfo.requests[x].status or root requests[x].status
+						fun statusFromRequests(requests: kotlinx.serialization.json.JsonArray?): Int? {
+							val non4k = requests
+								?.firstNotNullOfOrNull { req ->
+									val obj = req.jsonObject
+									val is4k = obj["is4k"]?.jsonPrimitive
+										?.contentOrNull
+										?.equals("true", ignoreCase = true) == true
+									val statusVal = obj["status"]?.jsonPrimitive?.intOrNull
+									if (!is4k) statusVal else null
+								}
+							val anyStatus = requests
+								?.firstNotNullOfOrNull { req ->
+									req.jsonObject["status"]?.jsonPrimitive?.intOrNull
+								}
+							return non4k ?: anyStatus
+						}
+
 						val mediaInfoStatus = mediaInfo
 							?.get("status")
 							?.jsonPrimitive
 							?.intOrNull
 
-						val requests = mediaInfo?.get("requests")?.jsonArray
-						val non4kStatus = requests
-							?.firstNotNullOfOrNull { req ->
-								val obj = req.jsonObject
-								val is4k = obj["is4k"]?.jsonPrimitive
-									?.contentOrNull
-									?.equals("true", ignoreCase = true) == true
-								val statusVal = obj["status"]?.jsonPrimitive?.intOrNull
-								if (!is4k) statusVal else null
-							}
-						val anyRequestStatus = requests
-							?.firstNotNullOfOrNull { req ->
-								req.jsonObject["status"]?.jsonPrimitive?.intOrNull
-							}
-						val requestStatusFromRequests = non4kStatus ?: anyRequestStatus
+						val mediaInfoRequests = mediaInfo?.get("requests")?.jsonArray
+						val rootRequests = partObj["requests"]?.jsonArray
 
-						val status = mediaInfoStatus ?: requestStatusFromRequests
+						val requestStatusFromMediaInfo = statusFromRequests(mediaInfoRequests)
+						val requestStatusFromRoot = statusFromRequests(rootRequests)
+
+						val status = mediaInfoStatus ?: requestStatusFromMediaInfo ?: requestStatusFromRoot
+						val hasAnyRequest = mediaInfoRequests?.isNotEmpty() == true || rootRequests?.isNotEmpty() == true
+						val requestId = rootRequests
+							?.firstOrNull()
+							?.jsonObject
+							?.get("id")
+							?.jsonPrimitive
+							?.intOrNull
+							?: mediaInfoRequests
+								?.firstOrNull()
+								?.jsonObject
+								?.get("id")
+								?.jsonPrimitive
+								?.intOrNull
+
 						val isAvailable = status == 5
 						val isPartiallyAvailable = status == 4
-						val isRequested = status != null && status != 5 && status != 4 && status != 3
+						val isRequested = (status != null && status != 5 && status != 4 && status != 3) || hasAnyRequest
 
 						JellyseerrSearchItem(
 							id = id,
@@ -1521,6 +1542,7 @@ private data class JellyseerrEpisodeRaw(
 							isPartiallyAvailable = isPartiallyAvailable,
 							isRequested = isRequested,
 							requestStatus = status,
+							requestId = requestId,
 							jellyfinId = jellyfinId,
 						)
 					} ?: emptyList()

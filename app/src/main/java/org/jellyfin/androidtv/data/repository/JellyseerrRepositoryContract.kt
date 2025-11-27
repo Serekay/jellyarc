@@ -24,4 +24,5 @@ interface JellyseerrRepository {
 	suspend fun getPersonCredits(personId: Int): Result<List<JellyseerrSearchItem>>
 	suspend fun getMovieGenres(): Result<List<JellyseerrGenreSlider>>
 	suspend fun getTvGenres(): Result<List<JellyseerrGenreSlider>>
+	suspend fun getCollectionDetails(collectionId: Int): Result<JellyseerrGenreDiscovery>
 }

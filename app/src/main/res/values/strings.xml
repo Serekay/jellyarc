@@ -618,12 +618,12 @@
     <string name="jellyseerr_movie_studios_title">Movie studios</string>
     <string name="jellyseerr_tv_networks_title">Networks</string>
     <string name="jellyseerr_view_more">View more</string>
-    <string name="jellyseerr_request_sended">Request sent</string>
-    <string name="jellyseerr_request_error">Request failed</string>
-    <string name="jellyseerr_seasons_label">Select seasons</string>
-    <string name="jellyseerr_seasons_all">All seasons</string>
-    <string name="jellyseerr_request_all_seasons">Request all seasons</string>
-    <string name="jellyseerr_episodes_count">%1$d episodes</string>
+	<string name="jellyseerr_request_sended">Request sent</string>
+	<string name="jellyseerr_request_error">Request failed</string>
+	<string name="jellyseerr_seasons_label">Select seasons</string>
+	<string name="jellyseerr_seasons_all">All seasons</string>
+	<string name="jellyseerr_request_all_seasons">Request all seasons</string>
+	<string name="jellyseerr_episodes_count">%1$d episodes</string>
     <string name="jellyseerr_episode_missing_badge">Missing</string>
     <string name="jellyseerr_no_episodes">No episodes available.</string>
     <string name="jellyseerr_episode_title_missing">Episode</string>
@@ -647,5 +647,7 @@
     <string name="jellyseerr_update_installing">Installing update.</string>
     <string name="jellyseerr_update_installing_message">Please wait while the installer is being prepared.</string>
     <string name="jellyseerr_update_install_button">Install</string>
+	<string name="jellyseerr_collection_label">%1$s collection</string>
+	<string name="jellyseerr_collection_show">Show</string>
+	<string name="jellyseerr_no_description">No description currently available.</string>
 </resources>
-

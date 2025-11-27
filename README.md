@@ -87,11 +87,6 @@ Use Tailscale to reach your Jellyfin server without opening ports.
 ## Known issues
 
 - Search may be unreliable: queries can fail or return incomplete results and require further refinement.
-- Available content is not always shown correctly: some views may display empty lists or missing metadata for items.
-- Navigation can be flaky in certain views: focus/selection may jump or wrap unexpectedly and needs optimization.
-
-(Workarounds: restarting the app or reloading the server connection can temporarily mitigate some issues.)
-
 ---
 
 ## Tips

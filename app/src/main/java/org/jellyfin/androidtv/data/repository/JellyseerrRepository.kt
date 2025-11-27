@@ -3,9 +3,16 @@ package org.jellyfin.androidtv.data.repository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -1007,6 +1014,14 @@ private data class Releases(
 )
 
 @Serializable
+private data class JellyseerrCollectionRaw(
+	val id: Int,
+	val name: String,
+	val backdrop_path: String? = null,
+	val poster_path: String? = null,
+)
+
+@Serializable
 private data class JellyseerrMovieDetailsRaw(
 	val id: Int,
 	val title: String? = null,
@@ -1024,6 +1039,13 @@ private data class JellyseerrMovieDetailsRaw(
 	val credits: JellyseerrCredits? = null,
 	val mediaInfo: MediaInfo? = null,
 	val releases: Releases? = null,
+	// Jellyseerr can expose this in different casings, so support all of them
+	@SerialName("belongsToCollection")
+	val belongsToCollection: JellyseerrCollectionRaw? = null,
+	@SerialName("belongs_to_collection")
+	val legacyBelongsToCollection: JellyseerrCollectionRaw? = null,
+	@SerialName("collection")
+	val collection: JellyseerrCollectionRaw? = null,
 ) 
 
 @Serializable
@@ -1151,6 +1173,19 @@ private data class JellyseerrEpisodeRaw(
 					?: raw.mediaInfo?.certification
 
 				Timber.i("Jellyseerr getMovieDetails for ${raw.title}: userCountry='$userCountry', finalCertification='$finalCertification'")
+				val rawCollection = raw.belongsToCollection ?: raw.legacyBelongsToCollection ?: raw.collection
+				Timber.d("Jellyseerr getMovieDetails collection raw: $rawCollection")
+
+				// Map collection if present (support multiple casing variants from the API)
+				val collection = rawCollection?.let { collectionRaw ->
+					Timber.i("Jellyseerr getMovieDetails mapping collection: id=${collectionRaw.id}, name='${collectionRaw.name}'")
+					JellyseerrCollection(
+						id = collectionRaw.id,
+						name = collectionRaw.name,
+						backdropPath = backdropImageUrl(collectionRaw.backdrop_path),
+						posterPath = posterImageUrl(collectionRaw.poster_path),
+					)
+				}
 
 				JellyseerrMovieDetails(
 					id = raw.id,
@@ -1167,6 +1202,7 @@ private data class JellyseerrEpisodeRaw(
 					certification = finalCertification,
 					genres = raw.genres,
 					credits = mappedCredits ?: raw.credits,
+					collection = collection,
 				)
 			}
 		}.onFailure {
@@ -1411,6 +1447,96 @@ private data class JellyseerrEpisodeRaw(
  				Timber.e(it, "Failed to load Jellyseerr episodes for tv $tmdbId season $seasonNumber")
  			}
  		}
+
+	override suspend fun getCollectionDetails(collectionId: Int): Result<JellyseerrGenreDiscovery> =
+		withContext(Dispatchers.IO) {
+			val config = getConfig()
+				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+
+			val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+
+			val url = "${config.baseUrl}/api/v1/collection/$collectionId"
+			val request = Request.Builder()
+				.url(url)
+				.header("X-API-Key", config.apiKey)
+				.header("X-API-User", userId.toString())
+				.build()
+
+			runCatching {
+				client.newCall(request).execute().use { response ->
+					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+
+					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+
+					// Parse collection response
+					val collectionData = json.parseToJsonElement(body).jsonObject
+					val name = collectionData["name"]?.jsonPrimitive?.content ?: "Collection"
+					val parts = collectionData["parts"]?.jsonArray?.map { part ->
+						val partObj = part.jsonObject
+						val id = partObj["id"]?.jsonPrimitive?.int ?: 0
+						val title = partObj["title"]?.jsonPrimitive?.content ?: ""
+						val overview = partObj["overview"]?.jsonPrimitive?.contentOrNull
+						val posterPath = partObj["posterPath"]?.jsonPrimitive?.contentOrNull?.let { posterImageUrl(it) }
+						val backdropPath = partObj["backdropPath"]?.jsonPrimitive?.contentOrNull?.let { backdropImageUrl(it) }
+						val releaseDate = partObj["releaseDate"]?.jsonPrimitive?.contentOrNull
+						val mediaInfo = partObj["mediaInfo"]?.jsonObject
+						val jellyfinId = mediaInfo?.get("jellyfinMediaId")?.jsonPrimitive?.contentOrNull
+
+						// Status can be on mediaInfo.status or inside mediaInfo.requests[x].status
+						val mediaInfoStatus = mediaInfo
+							?.get("status")
+							?.jsonPrimitive
+							?.intOrNull
+
+						val requests = mediaInfo?.get("requests")?.jsonArray
+						val non4kStatus = requests
+							?.firstNotNullOfOrNull { req ->
+								val obj = req.jsonObject
+								val is4k = obj["is4k"]?.jsonPrimitive
+									?.contentOrNull
+									?.equals("true", ignoreCase = true) == true
+								val statusVal = obj["status"]?.jsonPrimitive?.intOrNull
+								if (!is4k) statusVal else null
+							}
+						val anyRequestStatus = requests
+							?.firstNotNullOfOrNull { req ->
+								req.jsonObject["status"]?.jsonPrimitive?.intOrNull
+							}
+						val requestStatusFromRequests = non4kStatus ?: anyRequestStatus
+
+						val status = mediaInfoStatus ?: requestStatusFromRequests
+						val isAvailable = status == 5
+						val isPartiallyAvailable = status == 4
+						val isRequested = status != null && status != 5 && status != 4 && status != 3
+
+						JellyseerrSearchItem(
+							id = id,
+							mediaType = "movie",
+							title = title,
+							overview = overview,
+							posterPath = posterPath,
+							backdropPath = backdropPath,
+							releaseDate = releaseDate,
+							isAvailable = isAvailable,
+							isPartiallyAvailable = isPartiallyAvailable,
+							isRequested = isRequested,
+							requestStatus = status,
+							jellyfinId = jellyfinId,
+						)
+					} ?: emptyList()
+
+					JellyseerrGenreDiscovery(
+						genre = JellyseerrGenre(id = collectionId, name = name),
+						results = parts,
+						page = 1,
+						totalPages = 1,
+						totalResults = parts.size,
+					)
+				}
+			}.onFailure {
+				Timber.e(it, "Failed to load Jellyseerr collection $collectionId")
+			}
+		}
 
 	override suspend fun getPersonDetails(personId: Int): Result<JellyseerrPersonDetails> =
     withContext(Dispatchers.IO) {

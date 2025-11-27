@@ -205,6 +205,14 @@ data class JellyseerrEpisode(
 )
 
 @Serializable
+data class JellyseerrCollection(
+	val id: Int,
+	val name: String,
+	val backdropPath: String? = null,
+	val posterPath: String? = null,
+)
+
+@Serializable
 data class JellyseerrMovieDetails(
 	val id: Int,
 	val title: String? = null,
@@ -221,4 +229,5 @@ data class JellyseerrMovieDetails(
 	val genres: List<JellyseerrGenre> = emptyList(),
 	val credits: JellyseerrCredits? = null,
 	val seasons: List<JellyseerrSeason> = emptyList(),
+	val collection: JellyseerrCollection? = null,
 )

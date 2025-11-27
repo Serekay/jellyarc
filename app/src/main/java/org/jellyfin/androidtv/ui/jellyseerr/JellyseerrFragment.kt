@@ -105,6 +105,7 @@ import org.jellyfin.androidtv.ui.playback.PlaybackLauncher
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.model.serializer.toUUIDOrNull
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -2217,6 +2218,11 @@ private fun JellyseerrDetail(
     val genres = details?.genres.orEmpty()
     val certification = details?.certification?.takeIf { !it.isNullOrBlank() }
     val ageValue = certification?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }
+    val certificationDisplay = if (ageValue != null && Locale.getDefault().country.equals("DE", ignoreCase = true)) {
+        "FSK - $ageValue"
+    } else {
+        ageValue ?: certification
+    }
     val detailScrollState = rememberScrollState()
     val headerHeight = 200.dp
     var showCollectionDialog by remember { mutableStateOf(false) }
@@ -2553,7 +2559,7 @@ private fun JellyseerrDetail(
                                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                                         ) {
                                             Text(
-                                                text = ageValue ?: certification,
+                                                text = certificationDisplay ?: certification,
                                                 color = textColor,
                                                 fontSize = 12.sp,
                                             )

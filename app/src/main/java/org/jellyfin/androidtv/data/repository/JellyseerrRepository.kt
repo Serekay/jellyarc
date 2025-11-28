@@ -37,6 +37,9 @@ private const val TMDB_PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w300"
 private const val TMDB_GENRE_BACKDROP_BASE_URL = "https://image.tmdb.org/t/p/w1280"
 private const val TMDB_COMPANY_LOGO_BASE_URL = "https://image.tmdb.org/t/p/w780"
 private const val TMDB_COMPANY_LOGO_FILTER = "_filter(duotone,ffffff,bababa)"
+private const val CACHE_TTL_SHORT = 60_000L
+private const val CACHE_TTL_MEDIUM = 2 * 60_000L
+private const val CACHE_TTL_LONG = 5 * 60_000L
 
 private fun posterImageUrl(path: String?): String? = path?.takeIf { it.isNotBlank() }?.let { "$TMDB_POSTER_BASE_URL$it" }
 private fun backdropImageUrl(path: String?): String? = path?.takeIf { it.isNotBlank() }?.let { "$TMDB_BACKDROP_BASE_URL$it" }
@@ -154,12 +157,39 @@ private data class JellyseerrUser(
 	val jellyfinUserId: String? = null,
 )
 
-class JellyseerrRepositoryImpl(
-	private val userPreferences: UserPreferences,
-	private val sessionRepository: SessionRepository,
-	private val userRepository: UserRepository,
-	private val apiClient: ApiClient,
-) : JellyseerrRepository {
+	class JellyseerrRepositoryImpl(
+		private val userPreferences: UserPreferences,
+		private val sessionRepository: SessionRepository,
+		private val userRepository: UserRepository,
+		private val apiClient: ApiClient,
+	) : JellyseerrRepository {
+
+		private data class CacheEntry(val value: Any, val timestamp: Long)
+
+		private val cache = mutableMapOf<String, CacheEntry>()
+
+		private fun now() = System.currentTimeMillis()
+
+		@Suppress("UNCHECKED_CAST")
+		private fun <T> readCache(key: String, ttlMs: Long): T? {
+			val entry = cache[key] ?: return null
+			if (now() - entry.timestamp > ttlMs) {
+				cache.remove(key)
+				return null
+			}
+			return entry.value as? T
+		}
+
+		private fun writeCache(key: String, value: Any) {
+			cache[key] = CacheEntry(value, now())
+		}
+
+		private fun invalidateCache(vararg prefixes: String) {
+			if (prefixes.isEmpty()) return
+			val keys = cache.keys.toList()
+			keys.filter { key -> prefixes.any { prefix -> key.startsWith(prefix) } }
+				.forEach { cache.remove(it) }
+		}
 	private data class TvAvailability(
 		val isFullyAvailable: Boolean,
 		val isPartiallyAvailable: Boolean,
@@ -452,6 +482,9 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 	val config = getConfig()
 		?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
+	val cacheKey = "search:$query:$page"
+	readCache<JellyseerrSearchResult>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
+
 	if (query.isBlank()) return@withContext Result.success(JellyseerrSearchResult(emptyList(), 1, 1, 0))
 
 	val encodedQuery = java.net.URLEncoder.encode(query, Charsets.UTF_8.name())
@@ -460,11 +493,11 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 
 		val request = Request.Builder()
 			.url(url)
-			.header("X-API-Key", config.apiKey)
-			.header("X-API-User", userId.toString())
-			.build()
+		.header("X-API-Key", config.apiKey)
+		.header("X-API-User", userId.toString())
+		.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -482,136 +515,147 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					totalResults = result.totalResults,
 				)
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to search Jellyseerr")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to search Jellyseerr") }
+
+		result
 	}
 
 	override suspend fun getOwnRequests(): Result<List<JellyseerrRequest>> = withContext(Dispatchers.IO) {
-		val config = getConfig()
-			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+	val config = getConfig()
+		?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
-		val url = "${config.baseUrl}/api/v1/request?take=50&requestedBy=$userId&sort=modified&sortDirection=desc"
-		val request = Request.Builder()
-			.url(url)
-			.header("X-API-Key", config.apiKey)
-			.header("X-API-User", userId.toString())
-			.build()
+	val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+	val cacheKey = "requests:own:$userId"
+	readCache<List<JellyseerrRequest>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
+	val url = "${config.baseUrl}/api/v1/request?take=50&requestedBy=$userId&sort=modified&sortDirection=desc"
+	val request = Request.Builder()
+		.url(url)
+		.header("X-API-Key", config.apiKey)
+		.header("X-API-User", userId.toString())
+		.build()
 
-		runCatching {
-			client.newCall(request).execute().use { response ->
-				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+	val result = runCatching {
+		client.newCall(request).execute().use { response ->
+			if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
-				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
-				val page = json.decodeFromString(JellyseerrRequestPage.serializer(), body)
+			val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+			val page = json.decodeFromString(JellyseerrRequestPage.serializer(), body)
 
-				page.results.map { dto ->
-					val title = dto.media?.title ?: dto.media?.name ?: ""
-					val posterUrl = posterImageUrl(dto.media?.posterPath)
-					val backdropUrl = backdropImageUrl(dto.media?.backdropPath)
-					JellyseerrRequest(
-						id = dto.id,
-						status = dto.status,
-						mediaType = dto.media?.mediaType,
-						title = title,
-						tmdbId = dto.media?.tmdbId,
-						posterPath = posterUrl,
-						backdropPath = backdropUrl,
-					)
-				}
+			page.results.map { dto ->
+				val title = dto.media?.title ?: dto.media?.name ?: ""
+				val posterUrl = posterImageUrl(dto.media?.posterPath)
+				val backdropUrl = backdropImageUrl(dto.media?.backdropPath)
+				JellyseerrRequest(
+					id = dto.id,
+					status = dto.status,
+					mediaType = dto.media?.mediaType,
+					title = title,
+					tmdbId = dto.media?.tmdbId,
+					posterPath = posterUrl,
+					backdropPath = backdropUrl,
+				)
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr requests")
 		}
 	}
 
-	override suspend fun getRecentRequests(): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
-		val config = getConfig()
-			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+	result.onSuccess { writeCache(cacheKey, it) }
+		.onFailure { Timber.e(it, "Failed to load Jellyseerr requests") }
 
-		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
-		// Alle Anfragen vom aktuellen User anzeigen - verwende requestedBy Parameter, take=100 für alle
-		val url = "${config.baseUrl}/api/v1/request?requestedBy=${userId}&take=100&sort=modified&skip=0"
-		val request = Request.Builder()
-			.url(url)
-			.header("X-API-Key", config.apiKey)
-			.header("X-API-User", userId.toString())
-			.build()
+	result
+}
 
-		runCatching {
-			client.newCall(request).execute().use { response ->
-				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+override suspend fun getRecentRequests(): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
+	val config = getConfig()
+		?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
-				val page = json.decodeFromString(JellyseerrRequestPage.serializer(), body)
+	val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+	val cacheKey = "requests:recent:$userId"
+	readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
+	// Alle Anfragen vom aktuellen User anzeigen - verwende requestedBy Parameter, take=100 fc r alle
+	val url = "${config.baseUrl}/api/v1/request?requestedBy=${userId}&take=100&sort=modified&skip=0"
+	val request = Request.Builder()
+		.url(url)
+		.header("X-API-Key", config.apiKey)
+		.header("X-API-User", userId.toString())
+		.build()
 
-				Timber.d("Jellyseerr recent requests: found ${page.results.size} requests")
+	val result = runCatching {
+		client.newCall(request).execute().use { response ->
+			if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
-				// Für jeden Request holen wir die vollständigen Details von Jellyseerr, um Poster zu bekommen
-				page.results.mapNotNull { dto ->
-					val tmdbId = dto.media?.tmdbId ?: return@mapNotNull null
-					val mediaType = dto.media?.mediaType ?: return@mapNotNull null
+			val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+			val page = json.decodeFromString(JellyseerrRequestPage.serializer(), body)
 
-					// Hole die vollständigen Details von Jellyseerr (enthält Poster-Daten)
-					val detailsUrl = if (mediaType == "movie") {
-						"${config.baseUrl}/api/v1/movie/$tmdbId"
-					} else {
-						"${config.baseUrl}/api/v1/tv/$tmdbId"
-					}
+			Timber.d("Jellyseerr recent requests: found ${page.results.size} requests")
 
-					val detailsRequest = Request.Builder()
-						.url(detailsUrl)
-						.header("X-API-Key", config.apiKey)
-						.header("X-API-User", userId.toString())
-						.build()
+			page.results.mapNotNull { dto ->
+				val tmdbId = dto.media?.tmdbId ?: return@mapNotNull null
+				val mediaType = dto.media?.mediaType ?: return@mapNotNull null
 
-					try {
-						client.newCall(detailsRequest).execute().use { detailsResponse ->
-							if (!detailsResponse.isSuccessful) {
-								Timber.w("Failed to load details for $mediaType $tmdbId: HTTP ${detailsResponse.code}")
-								return@mapNotNull null
-							}
+				val detailsUrl = if (mediaType == "movie") {
+					"${config.baseUrl}/api/v1/movie/$tmdbId"
+				} else {
+					"${config.baseUrl}/api/v1/tv/$tmdbId"
+				}
 
-							val detailsBody = detailsResponse.body?.string() ?: return@mapNotNull null
-							val details = json.decodeFromString(JellyseerrMovieDetails.serializer(), detailsBody)
+				val detailsRequest = Request.Builder()
+					.url(detailsUrl)
+					.header("X-API-Key", config.apiKey)
+					.header("X-API-User", userId.toString())
+					.build()
 
-							val posterUrl = posterImageUrl(details.posterPath)
-							val backdropUrl = backdropImageUrl(details.backdropPath)
-							val dateValue = details.releaseDate ?: details.firstAirDate
-							val titleValue = details.title ?: details.name ?: ""
-
-							JellyseerrSearchItem(
-								id = tmdbId,
-								mediaType = mediaType,
-								title = titleValue,
-								overview = details.overview,
-								posterPath = posterUrl,
-								backdropPath = backdropUrl,
-								releaseDate = dateValue,
-								isRequested = dto.status != null && dto.status != 5,
-								isAvailable = dto.status == 5,
-								isPartiallyAvailable = false,
-								requestId = dto.id,
-								requestStatus = dto.status,
-							)
+				try {
+					client.newCall(detailsRequest).execute().use { detailsResponse ->
+						if (!detailsResponse.isSuccessful) {
+							Timber.w("Failed to load details for $mediaType $tmdbId: HTTP ${detailsResponse.code}")
+							return@mapNotNull null
 						}
-					} catch (e: Exception) {
-						Timber.e(e, "Failed to load details for $mediaType $tmdbId")
-						null
+
+						val detailsBody = detailsResponse.body?.string() ?: return@mapNotNull null
+						val details = json.decodeFromString(JellyseerrMovieDetails.serializer(), detailsBody)
+
+						val posterUrl = posterImageUrl(details.posterPath)
+						val backdropUrl = backdropImageUrl(details.backdropPath)
+						val dateValue = details.releaseDate ?: details.firstAirDate
+						val titleValue = details.title ?: details.name ?: ""
+
+						JellyseerrSearchItem(
+							id = tmdbId,
+							mediaType = mediaType,
+							title = titleValue,
+							overview = details.overview,
+							posterPath = posterUrl,
+							backdropPath = backdropUrl,
+							releaseDate = dateValue,
+							isRequested = dto.status != null && dto.status != 5,
+							isAvailable = dto.status == 5,
+							isPartiallyAvailable = false,
+							requestId = dto.id,
+							requestStatus = dto.status,
+						)
 					}
+				} catch (e: Exception) {
+					Timber.e(e, "Failed to load details for $mediaType $tmdbId")
+					null
 				}
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr recent requests")
 		}
 	}
+
+	result.onSuccess { writeCache(cacheKey, it) }
+		.onFailure { Timber.e(it, "Failed to load Jellyseerr recent requests") }
+
+	result
+}
 
 	override suspend fun createRequest(item: JellyseerrSearchItem, seasons: List<Int>?): Result<Unit> = withContext(Dispatchers.IO) {
-		val config = getConfig()
-			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+			val config = getConfig()
+				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+			val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
 
 		val body = JellyseerrCreateRequestBody(
 			mediaType = item.mediaType,
@@ -631,16 +675,27 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.post(requestBody)
 			.build()
 
-		runCatching {
-			client.newCall(request).execute().use { response ->
-				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+			runCatching {
+				client.newCall(request).execute().use { response ->
+					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				}
+			}.onSuccess {
+				clearTvAvailabilityCache()
+				invalidateCache(
+					"requests:",
+					"search:",
+					"movieDetails:",
+					"tvDetails:",
+					"collection:",
+					"person:",
+					"personCredits:",
+					"episodes:",
+					"genres:",
+				)
+			}.onFailure {
+				Timber.e(it, "Failed to create Jellyseerr request")
 			}
-		}.onSuccess {
-			clearTvAvailabilityCache()
-		}.onFailure {
-			Timber.e(it, "Failed to create Jellyseerr request")
 		}
-	}
 
 	override suspend fun cancelRequest(requestId: Int): Result<Unit> = withContext(Dispatchers.IO) {
 		val config = getConfig()
@@ -656,22 +711,35 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.delete()
 			.build()
 
-		runCatching {
-			client.newCall(request).execute().use { response ->
-				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+			runCatching {
+				client.newCall(request).execute().use { response ->
+					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				}
+			}.onSuccess {
+				clearTvAvailabilityCache()
+				invalidateCache(
+					"requests:",
+					"search:",
+					"movieDetails:",
+					"tvDetails:",
+					"collection:",
+					"person:",
+					"personCredits:",
+					"episodes:",
+					"genres:",
+				)
+			}.onFailure {
+				Timber.e(it, "Failed to cancel Jellyseerr request")
 			}
-		}.onSuccess {
-			clearTvAvailabilityCache()
-		}.onFailure {
-			Timber.e(it, "Failed to cancel Jellyseerr request")
 		}
-	}
 
 	override suspend fun discoverTrending(page: Int): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:trending:$page"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/trending?page=$page"
 		val request = Request.Builder()
@@ -680,7 +748,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -691,9 +759,12 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr trending titles")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr trending titles") }
+
+		result
 	}
 
 	override suspend fun discoverMovies(page: Int): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
@@ -701,6 +772,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:movies:$page"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/movies?page=$page"
 		val request = Request.Builder()
@@ -709,7 +782,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -720,9 +793,12 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr discover movies")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr discover movies") }
+
+		result
 	}
 
 	override suspend fun discoverTv(page: Int): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
@@ -730,6 +806,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:tv:$page"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/tv?page=$page"
 		val request = Request.Builder()
@@ -738,7 +816,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -749,9 +827,12 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr discover tv")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr discover tv") }
+
+		result
 	}
 
 	override suspend fun discoverUpcomingMovies(page: Int): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
@@ -759,6 +840,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:upcoming:movie:$page"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/movies/upcoming?page=$page"
 		val request = Request.Builder()
@@ -767,7 +850,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -778,9 +861,12 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr upcoming movies")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr upcoming movies") }
+
+		result
 	}
 
 	override suspend fun discoverUpcomingTv(page: Int): Result<List<JellyseerrSearchItem>> = withContext(Dispatchers.IO) {
@@ -788,6 +874,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:upcoming:tv:$page"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_SHORT)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/tv/upcoming?page=$page"
 		val request = Request.Builder()
@@ -796,7 +884,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -807,9 +895,12 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr upcoming tv")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr upcoming tv") }
+
+		result
 	}
 
 	override suspend fun discoverMoviesByGenre(genreId: Int, page: Int): Result<JellyseerrGenreDiscovery> = withContext(Dispatchers.IO) {
@@ -817,6 +908,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:genre:movie:$genreId:$page"
+		readCache<JellyseerrGenreDiscovery>(cacheKey, CACHE_TTL_MEDIUM)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/movies/genre/$genreId?page=$page"
 		val request = Request.Builder()
@@ -825,7 +918,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -836,24 +929,29 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 
-				JellyseerrGenreDiscovery(
-					genre = result.genre,
-					results = mappedResults,
-					page = result.page,
-					totalPages = result.totalPages,
-					totalResults = result.totalResults,
-				)
+					JellyseerrGenreDiscovery(
+						genre = result.genre,
+						results = mappedResults,
+						page = result.page,
+						totalPages = result.totalPages,
+						totalResults = result.totalResults,
+					)
+				}
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr movies by genre $genreId")
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr movies by genre $genreId") }
+
+		result
 		}
-	}
 
 	override suspend fun discoverTvByGenre(genreId: Int, page: Int): Result<JellyseerrGenreDiscovery> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:genre:tv:$genreId:$page"
+		readCache<JellyseerrGenreDiscovery>(cacheKey, CACHE_TTL_MEDIUM)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/tv/genre/$genreId?page=$page"
 		val request = Request.Builder()
@@ -862,7 +960,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -873,24 +971,29 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 
-				JellyseerrGenreDiscovery(
-					genre = result.genre,
-					results = mappedResults,
-					page = result.page,
-					totalPages = result.totalPages,
-					totalResults = result.totalResults,
-				)
+					JellyseerrGenreDiscovery(
+						genre = result.genre,
+						results = mappedResults,
+						page = result.page,
+						totalPages = result.totalPages,
+						totalResults = result.totalResults,
+					)
+				}
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr series by genre $genreId")
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr series by genre $genreId") }
+
+		result
 		}
-	}
 
 	override suspend fun discoverMoviesByStudio(studioId: Int, page: Int): Result<JellyseerrCompanyDiscovery> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:studio:$studioId:$page"
+		readCache<JellyseerrCompanyDiscovery>(cacheKey, CACHE_TTL_MEDIUM)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/movies/studio/$studioId?page=$page"
 		val request = Request.Builder()
@@ -899,7 +1002,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -910,24 +1013,29 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 
-				JellyseerrCompanyDiscovery(
-					company = mapCompanyDtoToModel(result.studio),
-					results = mappedResults,
-					page = result.page,
-					totalPages = result.totalPages,
-					totalResults = result.totalResults,
-				)
+					JellyseerrCompanyDiscovery(
+						company = mapCompanyDtoToModel(result.studio),
+						results = mappedResults,
+						page = result.page,
+						totalPages = result.totalPages,
+						totalResults = result.totalResults,
+					)
+				}
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr movies by studio $studioId")
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr movies by studio $studioId") }
+
+		result
 		}
-	}
 
 	override suspend fun discoverTvByNetwork(networkId: Int, page: Int): Result<JellyseerrCompanyDiscovery> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "discover:network:$networkId:$page"
+		readCache<JellyseerrCompanyDiscovery>(cacheKey, CACHE_TTL_MEDIUM)?.let { return@withContext Result.success(it) }
 
 		val url = "${config.baseUrl}/api/v1/discover/tv/network/$networkId?page=$page"
 		val request = Request.Builder()
@@ -936,7 +1044,7 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -947,18 +1055,21 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 					.map { mapSearchItemDtoToModel(it) }
 
-				JellyseerrCompanyDiscovery(
-					company = mapCompanyDtoToModel(result.network),
-					results = mappedResults,
-					page = result.page,
-					totalPages = result.totalPages,
-					totalResults = result.totalResults,
-				)
+					JellyseerrCompanyDiscovery(
+						company = mapCompanyDtoToModel(result.network),
+						results = mappedResults,
+						page = result.page,
+						totalPages = result.totalPages,
+						totalResults = result.totalResults,
+					)
+				}
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr series by network $networkId")
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr series by network $networkId") }
+
+		result
 		}
-	}
 
 @Serializable
 private data class MediaInfo(
@@ -1103,11 +1214,20 @@ private data class JellyseerrEpisodeRaw(
 	val missing: Boolean = false,
 )
 
-	override suspend fun getMovieDetails(tmdbId: Int): Result<JellyseerrMovieDetails> = withContext(Dispatchers.IO) {
+override suspend fun getMovieDetails(tmdbId: Int): Result<JellyseerrMovieDetails> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "movieDetails:$tmdbId"
+		readCache<JellyseerrMovieDetails>(cacheKey, CACHE_TTL_MEDIUM)?.let { cached ->
+			val castOk = cached.credits?.cast?.all { !it.profilePath.isNullOrBlank() } ?: true
+			if (!cached.posterPath.isNullOrBlank() && castOk) {
+				return@withContext Result.success(cached)
+			}
+			// Poster/Cast-Bilder fehlen im Cache -> frisch laden
+			Timber.d("Jellyseerr getMovieDetails cache skipped because of missing images")
+		}
 
 		val url = "${config.baseUrl}/api/v1/movie/$tmdbId"
 		val request = Request.Builder()
@@ -1116,7 +1236,7 @@ private data class JellyseerrEpisodeRaw(
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -1205,16 +1325,27 @@ private data class JellyseerrEpisodeRaw(
 					collection = collection,
 				)
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr movie details")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr movie details") }
+
+		result
 	}
 
-	override suspend fun getTvDetails(tmdbId: Int): Result<JellyseerrMovieDetails> = withContext(Dispatchers.IO) {
+override suspend fun getTvDetails(tmdbId: Int): Result<JellyseerrMovieDetails> = withContext(Dispatchers.IO) {
 		val config = getConfig()
 			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
 		val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+		val cacheKey = "tvDetails:$tmdbId"
+		readCache<JellyseerrMovieDetails>(cacheKey, CACHE_TTL_MEDIUM)?.let { cached ->
+			val castOk = cached.credits?.cast?.all { !it.profilePath.isNullOrBlank() } ?: true
+			if (!cached.posterPath.isNullOrBlank() && castOk) {
+				return@withContext Result.success(cached)
+			}
+			Timber.d("Jellyseerr getTvDetails cache skipped because of missing images")
+		}
 
 		val url = "${config.baseUrl}/api/v1/tv/$tmdbId"
 		val request = Request.Builder()
@@ -1223,7 +1354,7 @@ private data class JellyseerrEpisodeRaw(
 			.header("X-API-User", userId.toString())
 			.build()
 
-		runCatching {
+		val result = runCatching {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
@@ -1332,22 +1463,27 @@ private data class JellyseerrEpisodeRaw(
 					seasons = mappedSeasons,
 				)
 			}
-		}.onFailure {
-			Timber.e(it, "Failed to load Jellyseerr tv details")
 		}
+
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr tv details") }
+
+		result
 	}
 
 	override suspend fun getSeasonEpisodes(tmdbId: Int, seasonNumber: Int): Result<List<JellyseerrEpisode>> =
- 		withContext(Dispatchers.IO) {
- 			val config = getConfig()
- 				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+		withContext(Dispatchers.IO) {
+			val config = getConfig()
+				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
- 			val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+			val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+			val cacheKey = "episodes:$tmdbId:$seasonNumber"
+			readCache<List<JellyseerrEpisode>>(cacheKey, CACHE_TTL_MEDIUM)?.let { return@withContext Result.success(it) }
 
- 			// Erst TV-Details laden um den Seriennamen zu bekommen
- 			val tvDetailsUrl = "${config.baseUrl}/api/v1/tv/$tmdbId"
- 			val tvDetailsRequest = Request.Builder()
- 				.url(tvDetailsUrl)
+			// Erst TV-Details laden um den Seriennamen zu bekommen
+			val tvDetailsUrl = "${config.baseUrl}/api/v1/tv/$tmdbId"
+			val tvDetailsRequest = Request.Builder()
+				.url(tvDetailsUrl)
  				.header("X-API-Key", config.apiKey)
  				.header("X-API-User", userId.toString())
  				.build()
@@ -1408,18 +1544,18 @@ private data class JellyseerrEpisodeRaw(
  			}
 
  			val url = "${config.baseUrl}/api/v1/tv/$tmdbId/season/$seasonNumber"
- 			val request = Request.Builder()
- 				.url(url)
- 				.header("X-API-Key", config.apiKey)
- 				.header("X-API-User", userId.toString())
- 				.build()
+			val request = Request.Builder()
+				.url(url)
+				.header("X-API-Key", config.apiKey)
+				.header("X-API-User", userId.toString())
+				.build()
 
- 			runCatching {
- 				client.newCall(request).execute().use { response ->
- 					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+			val result = runCatching {
+				client.newCall(request).execute().use { response ->
+					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
- 					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
- 					val raw = json.decodeFromString(JellyseerrSeasonDetailsRaw.serializer(), body)
+					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+					val raw = json.decodeFromString(JellyseerrSeasonDetailsRaw.serializer(), body)
 
  					raw.episodes.map { episode ->
  						val imageUrl = episode.stillPath?.let(::posterImageUrl)
@@ -1439,32 +1575,41 @@ private data class JellyseerrEpisodeRaw(
  							airDate = episode.airDate,
  							isMissing = episode.missing,
  							isAvailable = isEpisodeAvailable,
- 							jellyfinId = jellyfinEpisodeId,
- 						)
- 					}
- 				}
- 			}.onFailure {
- 				Timber.e(it, "Failed to load Jellyseerr episodes for tv $tmdbId season $seasonNumber")
- 			}
- 		}
+							jellyfinId = jellyfinEpisodeId,
+						)
+					}
+				}
+			}
 
-	override suspend fun getCollectionDetails(collectionId: Int): Result<JellyseerrGenreDiscovery> =
-		withContext(Dispatchers.IO) {
-			val config = getConfig()
-				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+			result.onSuccess { writeCache(cacheKey, it) }
+				.onFailure { Timber.e(it, "Failed to load Jellyseerr episodes for tv $tmdbId season $seasonNumber") }
 
-			val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+			result
+		}
 
-			val url = "${config.baseUrl}/api/v1/collection/$collectionId"
-			val request = Request.Builder()
-				.url(url)
-				.header("X-API-Key", config.apiKey)
-				.header("X-API-User", userId.toString())
-				.build()
+		override suspend fun getCollectionDetails(collectionId: Int): Result<JellyseerrGenreDiscovery> =
+			withContext(Dispatchers.IO) {
+				val config = getConfig()
+					?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-			runCatching {
-				client.newCall(request).execute().use { response ->
-					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
+				val cacheKey = "collection:$collectionId"
+				readCache<JellyseerrGenreDiscovery>(cacheKey, CACHE_TTL_MEDIUM)?.let { cached ->
+					val postersOk = cached.results.all { !it.posterPath.isNullOrBlank() }
+					if (postersOk) return@withContext Result.success(cached)
+					Timber.d("Jellyseerr getCollectionDetails cache skipped because of missing posters")
+				}
+
+				val url = "${config.baseUrl}/api/v1/collection/$collectionId"
+				val request = Request.Builder()
+					.url(url)
+					.header("X-API-Key", config.apiKey)
+					.header("X-API-User", userId.toString())
+					.build()
+
+				val result = runCatching {
+					client.newCall(request).execute().use { response ->
+						if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 
 					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
 
@@ -1553,17 +1698,23 @@ private data class JellyseerrEpisodeRaw(
 						page = 1,
 						totalPages = 1,
 						totalResults = parts.size,
-					)
+						)
+					}
 				}
-			}.onFailure {
-				Timber.e(it, "Failed to load Jellyseerr collection $collectionId")
-			}
-		}
 
-	override suspend fun getPersonDetails(personId: Int): Result<JellyseerrPersonDetails> =
+				result.onSuccess { writeCache(cacheKey, it) }
+					.onFailure { Timber.e(it, "Failed to load Jellyseerr collection $collectionId") }
+
+				result
+			}
+
+override suspend fun getPersonDetails(personId: Int): Result<JellyseerrPersonDetails> =
     withContext(Dispatchers.IO) {
         val config = getConfig()
             ?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+
+        val cacheKey = "person:$personId"
+        readCache<JellyseerrPersonDetails>(cacheKey, CACHE_TTL_LONG)?.let { return@withContext Result.success(it) }
 
         val url = "${config.baseUrl}/api/v1/person/$personId"
         val request = Request.Builder()
@@ -1571,7 +1722,7 @@ private data class JellyseerrEpisodeRaw(
             .header("X-API-Key", config.apiKey)
             .build()
 
-        runCatching {
+        val result = runCatching {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
                 val body = response.body?.string() ?: throw IllegalStateException("Empty body")
@@ -1581,61 +1732,72 @@ private data class JellyseerrEpisodeRaw(
                     profilePath = profileImageUrl(raw.profilePath),
                 )
             }
-        }.onFailure {
-            Timber.e(it, "Failed to load Jellyseerr person details")
         }
+
+        result.onSuccess { writeCache(cacheKey, it) }
+            .onFailure { Timber.e(it, "Failed to load Jellyseerr person details") }
+
+        result
     }
 
-	override suspend fun getPersonCredits(personId: Int): Result<List<JellyseerrSearchItem>> =
-		withContext(Dispatchers.IO) {
-			val config = getConfig()
-				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+override suspend fun getPersonCredits(personId: Int): Result<List<JellyseerrSearchItem>> =
+	withContext(Dispatchers.IO) {
+		val config = getConfig()
+			?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
 
-			val url = "${config.baseUrl}/api/v1/person/$personId/combined_credits"
-			val request = Request.Builder()
-				.url(url)
-				.header("X-API-Key", config.apiKey)
-				.build()
+		val cacheKey = "personCredits:$personId"
+		readCache<List<JellyseerrSearchItem>>(cacheKey, CACHE_TTL_LONG)?.let { return@withContext Result.success(it) }
 
-			runCatching {
-				client.newCall(request).execute().use { response ->
-					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
-					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
-					val combined = json.decodeFromString(JellyseerrCombinedCredits.serializer(), body)
+		val url = "${config.baseUrl}/api/v1/person/$personId/combined_credits"
+		val request = Request.Builder()
+			.url(url)
+			.header("X-API-Key", config.apiKey)
+			.build()
 
-					combined.cast
-						.filter { it.mediaType == "movie" || it.mediaType == "tv" }
-						.map { credit ->
-							val posterUrl = posterImageUrl(credit.posterPath)
-							val backdropUrl = backdropImageUrl(credit.backdropPath)
-							val releaseDate = credit.releaseDate ?: credit.firstAirDate
-							val status = credit.mediaInfo?.status
-							val isAvailable = status == 5
-							val isPartiallyAvailable = status == 4
-							val jellyfinId = credit.mediaInfo?.jellyfinMediaId ?: credit.mediaInfo?.jellyfinMediaId4k
-							JellyseerrSearchItem(
-								id = credit.id,
-								mediaType = credit.mediaType ?: "movie",
-								title = (credit.title ?: credit.name).orEmpty(),
-								overview = credit.overview,
-								posterPath = posterUrl,
-								backdropPath = backdropUrl,
-								releaseDate = releaseDate,
-								isAvailable = isAvailable,
-								isPartiallyAvailable = isPartiallyAvailable,
-								jellyfinId = jellyfinId,
-							)
-						}
-				}
-			}.onFailure {
-				Timber.e(it, "Failed to load Jellyseerr person credits")
+		val result = runCatching {
+			client.newCall(request).execute().use { response ->
+				if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+				val body = response.body?.string() ?: throw IllegalStateException("Empty body")
+				val combined = json.decodeFromString(JellyseerrCombinedCredits.serializer(), body)
+
+				combined.cast
+					.filter { it.mediaType == "movie" || it.mediaType == "tv" }
+					.map { credit ->
+						val posterUrl = posterImageUrl(credit.posterPath)
+						val backdropUrl = backdropImageUrl(credit.backdropPath)
+						val releaseDate = credit.releaseDate ?: credit.firstAirDate
+						val status = credit.mediaInfo?.status
+						val isAvailable = status == 5
+						val isPartiallyAvailable = status == 4
+						val jellyfinId = credit.mediaInfo?.jellyfinMediaId ?: credit.mediaInfo?.jellyfinMediaId4k
+						JellyseerrSearchItem(
+							id = credit.id,
+							mediaType = credit.mediaType ?: "movie",
+							title = (credit.title ?: credit.name).orEmpty(),
+							overview = credit.overview,
+							posterPath = posterUrl,
+							backdropPath = backdropUrl,
+							releaseDate = releaseDate,
+							isAvailable = isAvailable,
+							isPartiallyAvailable = isPartiallyAvailable,
+							jellyfinId = jellyfinId,
+						)
+					}
 			}
 		}
 
-	override suspend fun getMovieGenres(): Result<List<JellyseerrGenreSlider>> =
+		result.onSuccess { writeCache(cacheKey, it) }
+			.onFailure { Timber.e(it, "Failed to load Jellyseerr person credits") }
+
+		result
+	}
+
+override suspend fun getMovieGenres(): Result<List<JellyseerrGenreSlider>> =
 		withContext(Dispatchers.IO) {
 			val config = getConfig()
 				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+
+			readCache<List<JellyseerrGenreSlider>>("genres:movie", CACHE_TTL_LONG)?.let { return@withContext Result.success(it) }
 
 			val url = "${config.baseUrl}/api/v1/discover/genreslider/movie"
 			val request = Request.Builder()
@@ -1643,7 +1805,7 @@ private data class JellyseerrEpisodeRaw(
 				.header("X-API-Key", config.apiKey)
 				.build()
 
-			runCatching {
+			val result = runCatching {
 				client.newCall(request).execute().use { response ->
 					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
@@ -1660,15 +1822,20 @@ private data class JellyseerrEpisodeRaw(
 						)
 					}
 				}
-			}.onFailure {
-				Timber.e(it, "Failed to load Jellyseerr movie genres")
 			}
+
+			result.onSuccess { writeCache("genres:movie", it) }
+				.onFailure { Timber.e(it, "Failed to load Jellyseerr movie genres") }
+
+			result
 		}
 
-	override suspend fun getTvGenres(): Result<List<JellyseerrGenreSlider>> =
+override suspend fun getTvGenres(): Result<List<JellyseerrGenreSlider>> =
 		withContext(Dispatchers.IO) {
 			val config = getConfig()
 				?: return@withContext Result.failure(IllegalStateException("Jellyseerr not configured"))
+
+			readCache<List<JellyseerrGenreSlider>>("genres:tv", CACHE_TTL_LONG)?.let { return@withContext Result.success(it) }
 
 			val url = "${config.baseUrl}/api/v1/discover/genreslider/tv"
 			val request = Request.Builder()
@@ -1676,7 +1843,7 @@ private data class JellyseerrEpisodeRaw(
 				.header("X-API-Key", config.apiKey)
 				.build()
 
-			runCatching {
+			val result = runCatching {
 				client.newCall(request).execute().use { response ->
 					if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
 					val body = response.body?.string() ?: throw IllegalStateException("Empty body")
@@ -1693,8 +1860,11 @@ private data class JellyseerrEpisodeRaw(
 						)
 					}
 				}
-			}.onFailure {
-				Timber.e(it, "Failed to load Jellyseerr TV genres")
 			}
+
+			result.onSuccess { writeCache("genres:tv", it) }
+				.onFailure { Timber.e(it, "Failed to load Jellyseerr TV genres") }
+
+			result
 		}
 }

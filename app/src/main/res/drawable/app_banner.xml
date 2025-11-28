@@ -1,4 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@drawable/app_banner_background" />
-    <item android:drawable="@drawable/app_banner_foreground" />
+	<!-- Match the new app icon background -->
+	<item>
+		<shape android:shape="rectangle">
+			<solid android:color="#0A0A0A" />
+		</shape>
+	</item>
+
+	<!-- Center the adaptive icon foreground so the launcher shows the same branding as the app icon -->
+	<item>
+		<bitmap
+			android:src="@mipmap/app_icon_foreground"
+			android:gravity="center" />
+	</item>
 </layer-list>

@@ -42,7 +42,7 @@
         android:name=".JellyfinApplication"
         android:allowBackup="true"
         android:appCategory="video"
-        android:banner="@mipmap/app_banner"
+        android:banner="@drawable/app_banner"
         android:dataExtractionRules="@xml/backup_rules"
         android:fullBackupContent="@xml/backup_content"
         android:icon="@mipmap/app_icon"

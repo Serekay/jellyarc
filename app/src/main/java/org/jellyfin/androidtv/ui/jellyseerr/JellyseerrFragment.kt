@@ -207,42 +207,58 @@ private fun JellyseerrScreen(
 			}
 		}
 
-		val toastAlpha by animateFloatAsState(
-			targetValue = if (toastMessage != null) 1f else 0f,
-			animationSpec = tween(durationMillis = 300),
-		)
-		val selectedItem = state.selectedItem
-		if (selectedItem != null) {
-			val backdropUrl = state.selectedMovie?.backdropPath ?: selectedItem.backdropPath
+		        val toastAlpha by animateFloatAsState(
+            targetValue = if (toastMessage != null) 1f else 0f,
+            animationSpec = tween(durationMillis = 300),
+        )
+        val selectedItem = state.selectedItem
+        val isSearching = state.query.isNotBlank() || state.showSearchResultsGrid
+        if (selectedItem != null) {
+            val backdropUrl = state.selectedMovie?.backdropPath ?: selectedItem.backdropPath
 
-			if (!backdropUrl.isNullOrBlank()) {
-				AsyncImage(
-					modifier = Modifier
-						.fillMaxSize()
-						.graphicsLayer(alpha = 0.4f),
-					url = backdropUrl,
-					aspectRatio = 16f / 9f,
-				)
-			}
-		} else if (state.selectedPerson == null) {
-			// Crossfade für weichen Übergang zwischen Backdrops
-			androidx.compose.animation.Crossfade(
-				targetState = currentBackdropUrl,
-				animationSpec = androidx.compose.animation.core.tween(durationMillis = 1000),
-				label = "backdrop_crossfade"
-			) { backdropUrl ->
-				if (backdropUrl != null) {
-					AsyncImage(
-						modifier = Modifier
-							.fillMaxSize()
-							.graphicsLayer(alpha = 0.4f),
-						url = backdropUrl,
-						aspectRatio = 16f / 9f,
-						scaleType = android.widget.ImageView.ScaleType.CENTER_CROP,
-					)
-				}
-			}
-		}
+            if (!backdropUrl.isNullOrBlank()) {
+                AsyncImage(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(alpha = 0.4f),
+                    url = backdropUrl,
+                    aspectRatio = 16f / 9f,
+                )
+            }
+        } else if (state.selectedPerson == null) {
+            if (isSearching) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF0F172A),
+                                    Color(0xFF111827),
+                                    Color(0xFF0B1220),
+                                ),
+                            ),
+                        ),
+                )
+            } else {
+                androidx.compose.animation.Crossfade(
+                    targetState = currentBackdropUrl,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 1000),
+                    label = "backdrop_crossfade"
+                ) { backdropUrl ->
+                    if (backdropUrl != null) {
+                        AsyncImage(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(alpha = 0.4f),
+                            url = backdropUrl,
+                            aspectRatio = 16f / 9f,
+                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP,
+                        )
+                    }
+                }
+            }
+        }
 
 		Column(modifier = Modifier.fillMaxSize()) {
 			val state by viewModel.uiState.collectAsState()

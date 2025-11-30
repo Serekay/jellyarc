@@ -25,11 +25,13 @@ internal class JellyseerrDiscoveryActions(
 	private fun computeContentHash(items: List<JellyseerrSearchItem>): Int {
 		return items.map { it.id }.hashCode()
 	}
-	fun search(page: Int = 1) {
-		val term = state.value.query.trim()
+
+	fun search(rawQuery: String, page: Int = 1) {
+		val term = rawQuery.trim()
 		if (term.isBlank()) {
 			state.update {
 				it.copy(
+					results = emptyList(),
 					showSearchResultsGrid = false,
 					searchHasMore = false,
 				)
@@ -38,13 +40,20 @@ internal class JellyseerrDiscoveryActions(
 		}
 
 		scope.launch {
+			// Abort stale pagination if query changed mid-flight
+			if (state.value.query.trim() != term) return@launch
+
+			// Only set loading state for page 1, don't hide grid yet to avoid flickering
 			if (page == 1) {
 				state.update {
 					it.copy(
 						isLoading = true,
 						errorMessage = null,
 						showAllTrendsGrid = false,
-						showSearchResultsGrid = false,
+						showSearchResultsGrid = true,
+						results = emptyList(),
+						searchCurrentPage = 1,
+						searchHasMore = false,
 					)
 				}
 			}
@@ -70,9 +79,12 @@ internal class JellyseerrDiscoveryActions(
 			val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 			state.update { current ->
+				// Skip applying stale results if query changed while request was in-flight
+				if (current.query.trim() != term) return@update current
 				val combined = if (page == 1) marked else current.results + marked
+				val allLoaded = page >= result.totalPages
 				current.copy(
-					isLoading = false,
+					isLoading = !allLoaded,  // Keep loading until all pages are fetched
 					results = combined,
 					showSearchResultsGrid = true,
 					showAllTrendsGrid = false,
@@ -80,6 +92,11 @@ internal class JellyseerrDiscoveryActions(
 					searchTotalPages = result.totalPages,
 					searchHasMore = page < result.totalPages,
 				)
+			}
+
+			// Automatically load all pages for search results
+			if (page < result.totalPages && state.value.query.trim() == term) {
+				search(term, page + 1)
 			}
 		}
 	}
@@ -623,7 +640,7 @@ internal class JellyseerrDiscoveryActions(
 	fun loadMoreSearchResults() {
 		val current = state.value
 		if (!current.showSearchResultsGrid || current.isLoading || !current.searchHasMore) return
-		search(page = current.searchCurrentPage + 1)
+		search(current.query.trim(), page = current.searchCurrentPage + 1)
 	}
 
 	fun closeAllTrends() {

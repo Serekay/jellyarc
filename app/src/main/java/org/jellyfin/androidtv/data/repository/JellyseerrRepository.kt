@@ -487,7 +487,8 @@ override suspend fun search(query: String, page: Int): Result<JellyseerrSearchRe
 
 	if (query.isBlank()) return@withContext Result.success(JellyseerrSearchResult(emptyList(), 1, 1, 0))
 
-	val encodedQuery = java.net.URLEncoder.encode(query, Charsets.UTF_8.name())
+	// Encode spaces explicitly as %20 to match Jellyseerr expectations (avoid server 400 on '+')
+	val encodedQuery = java.net.URLEncoder.encode(query, Charsets.UTF_8.name()).replace("+", "%20")
 	val userId = resolveCurrentUserId(config).getOrElse { return@withContext Result.failure(it) }
 	val url = "${config.baseUrl}/api/v1/search?query=$encodedQuery&page=$page"
 

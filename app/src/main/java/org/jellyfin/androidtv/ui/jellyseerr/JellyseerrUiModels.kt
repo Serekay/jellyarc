@@ -38,6 +38,7 @@ data class SeasonKey(val tmdbId: Int, val seasonNumber: Int)
 data class JellyseerrUiState(
 	val isLoading: Boolean = false,
 	val query: String = "",
+	val searchFilter: JellyseerrSearchFilter = JellyseerrSearchFilter.ALL,
 	val results: List<JellyseerrSearchItem> = emptyList(),
 	val ownRequests: List<JellyseerrRequest> = emptyList(),
 	val errorMessage: String? = null,
@@ -82,3 +83,7 @@ data class ScrollPosition(
 	val index: Int = 0,
 	val offset: Int = 0,
 )
+
+enum class JellyseerrSearchFilter {
+	ALL, MOVIES, TV, PEOPLE
+}

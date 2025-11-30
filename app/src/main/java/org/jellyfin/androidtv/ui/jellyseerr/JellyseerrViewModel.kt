@@ -15,6 +15,7 @@ import org.jellyfin.androidtv.data.repository.JellyseerrRepository
 import org.jellyfin.androidtv.data.repository.JellyseerrRequest
 import org.jellyfin.androidtv.data.repository.JellyseerrSearchItem
 import org.jellyfin.androidtv.ui.jellyseerr.JellyseerrDetailActions.OverlaySnapshot
+import org.jellyfin.androidtv.ui.jellyseerr.JellyseerrSearchFilter
 
 class JellyseerrViewModel(
 	private val repository: JellyseerrRepository,
@@ -47,7 +48,7 @@ class JellyseerrViewModel(
 	}
 
 	fun updateQuery(query: String) {
-		_uiState.update { it.copy(query = query) }
+		_uiState.update { it.copy(query = query, searchFilter = JellyseerrSearchFilter.ALL) }
 	}
 
 	fun updateLastFocusedItem(itemKey: String?) {
@@ -62,8 +63,12 @@ class JellyseerrViewModel(
 		_uiState.update { it.copy(mainScrollPosition = position) }
 	}
 
-	fun search(page: Int = 1) {
-		discoveryActions.search(page)
+	fun search(term: String, page: Int = 1) {
+		discoveryActions.search(term, page)
+	}
+
+	fun updateSearchFilter(filter: JellyseerrSearchFilter) {
+		_uiState.update { it.copy(searchFilter = filter) }
 	}
 
 	fun loadSeasonEpisodes(tmdbId: Int, seasonNumber: Int) {

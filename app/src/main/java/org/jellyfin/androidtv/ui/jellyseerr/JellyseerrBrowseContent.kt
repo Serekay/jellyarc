@@ -72,6 +72,7 @@ import org.jellyfin.androidtv.data.repository.JellyseerrGenre
 import org.jellyfin.androidtv.data.repository.JellyseerrGenreSlider
 import org.jellyfin.androidtv.data.repository.JellyseerrRequest
 import org.jellyfin.androidtv.data.repository.JellyseerrSearchItem
+import org.jellyfin.androidtv.ui.jellyseerr.JellyseerrSearchFilter
 import org.jellyfin.androidtv.ui.base.JellyfinTheme
 import org.jellyfin.androidtv.ui.base.Text
 import org.jellyfin.androidtv.ui.composable.AsyncImage
@@ -198,7 +199,7 @@ internal fun JellyseerrContent(
 					viewModel.closeSearchResultsGrid()
 					return@collectLatest
 				}
-				viewModel.search()
+				viewModel.search(trimmed)
 			}
 	}
 
@@ -272,9 +273,7 @@ internal fun JellyseerrContent(
 					SearchTextInput(
 						query = state.query,
 						onQueryChange = { viewModel.updateQuery(it) },
-						onQuerySubmit = {
-							viewModel.search()
-							keyboardController?.hide()
+						onQuerySubmit = {// do nothing because of debounced search
 						},
 						modifier = Modifier
 							.fillMaxWidth()
@@ -304,6 +303,48 @@ internal fun JellyseerrContent(
 				}
 				Text(text = headerText, color = Color.White, fontSize = sectionTitleFontSize)
 
+				if (state.showSearchResultsGrid) {
+					Row(
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+						modifier = Modifier.padding(vertical = 8.dp),
+					) {
+						val filters = listOf(
+							JellyseerrSearchFilter.ALL to stringResource(R.string.lbl_all_items),
+							JellyseerrSearchFilter.MOVIES to stringResource(R.string.lbl_movies),
+							JellyseerrSearchFilter.TV to stringResource(R.string.lbl_tv_series),
+							JellyseerrSearchFilter.PEOPLE to stringResource(R.string.jellyseerr_cast_title),
+						)
+						filters.forEach { (filter, label) ->
+							val isSelected = state.searchFilter == filter
+							val tabInteraction = remember { MutableInteractionSource() }
+							val tabFocused by tabInteraction.collectIsFocusedAsState()
+							Box(
+								modifier = Modifier
+									.clip(RoundedCornerShape(10.dp))
+									.background(if (isSelected) Color(0xFF6366F1) else Color(0xFF1F2937))
+									.border(
+										width = if (tabFocused) 2.dp else 0.dp,
+										color = Color.White,
+										shape = RoundedCornerShape(10.dp),
+									)
+									.clickable(
+										interactionSource = tabInteraction,
+										indication = null,
+									) { viewModel.updateSearchFilter(filter) }
+									.focusable(interactionSource = tabInteraction)
+									.padding(horizontal = 12.dp, vertical = 6.dp),
+							) {
+								Text(
+									text = label,
+									color = Color.White,
+									fontSize = 14.sp,
+									fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+								)
+							}
+						}
+					}
+				}
+
 				val isCategoryScreen = state.discoverCategory in setOf(
 					JellyseerrDiscoverCategory.MOVIE_GENRE,
 					JellyseerrDiscoverCategory.TV_GENRE,
@@ -325,7 +366,31 @@ internal fun JellyseerrContent(
 						modifier = Modifier.padding(vertical = 8.dp),
 					)
 				} else {
-					val rows = gridResults.chunked(5)
+					// Categorize search results if in search mode
+					val categorizedResults = if (state.showSearchResultsGrid) {
+						val movies = gridResults.filter { it.mediaType == "movie" }
+						val tvShows = gridResults.filter { it.mediaType == "tv" }
+						val people = gridResults.filter { it.mediaType == "person" }
+						val filtered = when (state.searchFilter) {
+							JellyseerrSearchFilter.ALL -> listOf(
+								Triple(stringResource(R.string.lbl_movies), movies, movies.isNotEmpty()),
+								Triple(stringResource(R.string.lbl_tv_series), tvShows, tvShows.isNotEmpty()),
+								Triple(stringResource(R.string.jellyseerr_cast_title), people, people.isNotEmpty()),
+							)
+							JellyseerrSearchFilter.MOVIES -> listOf(
+								Triple(stringResource(R.string.lbl_movies), movies, movies.isNotEmpty()),
+							)
+							JellyseerrSearchFilter.TV -> listOf(
+								Triple(stringResource(R.string.lbl_tv_series), tvShows, tvShows.isNotEmpty()),
+							)
+							JellyseerrSearchFilter.PEOPLE -> listOf(
+								Triple(stringResource(R.string.jellyseerr_cast_title), people, people.isNotEmpty()),
+							)
+						}
+						filtered
+					} else {
+						listOf(Triple("", gridResults, true))
+					}
 
 					LazyColumn(
 						state = allTrendsListState,
@@ -333,34 +398,53 @@ internal fun JellyseerrContent(
 							.fillMaxSize()
 							.padding(top = 8.dp),
 					) {
-						items(rows.size) { rowIndex ->
-							val rowItems = rows[rowIndex]
-
-							Row(
-								horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-								modifier = Modifier
-									.fillMaxWidth()
-									.padding(vertical = 15.dp),
-							) {
-								for (item in rowItems) {
-									JellyseerrSearchCard(
-										item = item,
-										onClick = onSearchItemClick(viewModel, item),
-										// do not overwrite last focused main-page card while inside grids
-									)
+						categorizedResults.forEach { (categoryTitle, categoryItems, showCategory) ->
+							if (showCategory) {
+								// Category title
+								if (state.showSearchResultsGrid && categoryTitle.isNotBlank()) {
+									item {
+										Text(
+											text = categoryTitle,
+											color = JellyfinTheme.colorScheme.onBackground,
+											fontSize = 22.sp,
+											fontWeight = FontWeight.Bold,
+											modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+										)
+									}
 								}
-							}
 
-							if (rowIndex == rows.lastIndex && !state.isLoading) {
-								when {
-									state.showAllTrendsGrid && state.discoverHasMore -> {
-										LaunchedEffect(key1 = rows.size) {
-											viewModel.loadMoreTrends()
+								// Category items in rows
+								val rows = categoryItems.chunked(5)
+								items(rows.size) { rowIndex ->
+									val rowItems = rows[rowIndex]
+
+									Row(
+										horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+										modifier = Modifier
+											.fillMaxWidth()
+											.padding(vertical = 15.dp),
+									) {
+										for (item in rowItems) {
+											JellyseerrSearchCard(
+												item = item,
+												onClick = onSearchItemClick(viewModel, item),
+												// do not overwrite last focused main-page card while inside grids
+											)
 										}
 									}
-									state.showSearchResultsGrid && state.searchHasMore -> {
-										LaunchedEffect(key1 = rows.size) {
-											viewModel.loadMoreSearchResults()
+
+									if (rowIndex == rows.lastIndex && !state.isLoading) {
+										when {
+											state.showAllTrendsGrid && state.discoverHasMore -> {
+												LaunchedEffect(key1 = rows.size) {
+													viewModel.loadMoreTrends()
+												}
+											}
+											state.showSearchResultsGrid && state.searchHasMore -> {
+												LaunchedEffect(key1 = rows.size) {
+													viewModel.loadMoreSearchResults()
+												}
+											}
 										}
 									}
 								}
@@ -369,25 +453,20 @@ internal fun JellyseerrContent(
 					}
 				}
 			} else {
-				val titleRes = if (state.query.isBlank()) {
-					R.string.jellyseerr_discover_title
-				} else {
-					R.string.jellyseerr_search_results_title
-				}
-				Text(text = stringResource(titleRes), color = JellyfinTheme.colorScheme.onBackground, fontSize = sectionTitleFontSize)
+				// Only show this section when not searching or when query is blank (discover mode)
+				// This prevents the row view from showing while search results are loading
+				if (state.query.isBlank()) {
+					val titleRes = R.string.jellyseerr_discover_title
+					Text(text = stringResource(titleRes), color = JellyfinTheme.colorScheme.onBackground, fontSize = sectionTitleFontSize)
 
-				val baseResults = if (state.query.isBlank()) {
-					state.trendingResults.take(20)
-				} else {
-					state.results
-				}
+					val baseResults = state.trendingResults.take(20)
 
-				if (baseResults.isEmpty() && !state.isLoading) {
-					Text(
-						text = stringResource(R.string.jellyseerr_no_results),
-						modifier = Modifier.padding(vertical = 8.dp),
-					)
-				} else {
+					if (baseResults.isEmpty() && !state.isLoading) {
+						Text(
+							text = stringResource(R.string.jellyseerr_no_results),
+							modifier = Modifier.padding(vertical = 8.dp),
+						)
+					} else {
 					val focusRequester = FocusRequester()
 					val listState = rememberLazyListState(
 						initialFirstVisibleItemIndex = state.scrollPositions["discover"]?.index ?: 0,
@@ -414,7 +493,8 @@ internal fun JellyseerrContent(
 							.height(250.dp)
 							.padding(top = 15.dp),
 					) {
-						val showViewAllCard = !state.showSearchResultsGrid
+						// Don't show "View All" card for search results or if already in grid view
+						val showViewAllCard = !state.showSearchResultsGrid && state.query.isBlank()
 						val maxIndex = baseResults.lastIndex
 						val extraItems = if (showViewAllCard) 1 else 0
 
@@ -461,6 +541,7 @@ internal fun JellyseerrContent(
 								}
 							}
 						}
+					}
 					}
 				}
 
@@ -702,21 +783,20 @@ internal fun JellyseerrRecentRequestCard(
 					shape = RoundedCornerShape(8.dp),
 				),
 		) {
-			// Backdrop Image
-			if (!item.backdropPath.isNullOrBlank()) {
-				AsyncImage(
-					modifier = Modifier.fillMaxSize(),
-					url = item.backdropPath,
-					aspectRatio = 16f / 9f,
-					scaleType = ImageView.ScaleType.CENTER_CROP,
-				)
-			} else {
-				Box(
-					modifier = Modifier
-						.fillMaxSize()
-						.background(Color(0xFF1A1A1A)),
-				)
-			}
+			// Replace flickering backdrops with a stable gradient background
+			Box(
+				modifier = Modifier
+					.fillMaxSize()
+					.background(
+						Brush.verticalGradient(
+							colors = listOf(
+								Color(0xFF0F172A),
+								Color(0xFF111827),
+								Color(0xFF0B1220),
+							),
+						),
+					),
+			)
 
 			// Dimmer overlay
 			Box(

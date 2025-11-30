@@ -485,6 +485,7 @@ internal fun JellyseerrContent(
 						sectionSpacing = sectionSpacing,
 						sectionInnerSpacing = sectionInnerSpacing,
 						sectionTitleFontSize = sectionTitleFontSize,
+						contentHash = state.contentHashes["popular"],
 					)
 				}
 
@@ -509,6 +510,7 @@ internal fun JellyseerrContent(
 						sectionSpacing = sectionSpacing,
 						sectionInnerSpacing = sectionInnerSpacing,
 						sectionTitleFontSize = sectionTitleFontSize,
+						contentHash = state.contentHashes["popularTv"],
 					)
 				}
 
@@ -534,6 +536,7 @@ internal fun JellyseerrContent(
 						sectionSpacing = sectionSpacing,
 						sectionInnerSpacing = sectionInnerSpacing,
 						sectionTitleFontSize = sectionTitleFontSize,
+						contentHash = state.contentHashes["upcomingMovies"],
 					)
 				}
 
@@ -558,6 +561,7 @@ internal fun JellyseerrContent(
 						sectionSpacing = sectionSpacing,
 						sectionInnerSpacing = sectionInnerSpacing,
 						sectionTitleFontSize = sectionTitleFontSize,
+						contentHash = state.contentHashes["upcomingTv"],
 					)
 				}
 
@@ -633,6 +637,7 @@ internal fun JellyseerrContent(
 						sectionSpacing = sectionSpacing,
 						sectionInnerSpacing = sectionInnerSpacing,
 						sectionTitleFontSize = sectionTitleFontSize,
+						contentHash = state.contentHashes["recentRequests"],
 					)
 				}
 			}

@@ -49,8 +49,11 @@ internal fun JellyseerrContentSection(
 	sectionInnerSpacing: androidx.compose.ui.unit.Dp = 6.dp,
 	sectionTitleFontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
 	showViewAll: Boolean = true,
+	contentHash: Int? = null,
 ) {
-	if (items.isEmpty()) {
+	// Use contentHash as a key to force recomposition when content changes
+	val effectiveItems = remember(items, contentHash) { items }
+	if (effectiveItems.isEmpty()) {
 		Spacer(modifier = Modifier.size(sectionSpacing))
 		Text(
 			text = title,
@@ -99,19 +102,19 @@ internal fun JellyseerrContentSection(
 			.fillMaxWidth()
 			.height(250.dp),
 	) {
-		val maxIndex = items.lastIndex
+		val maxIndex = effectiveItems.lastIndex
 		val extraItems = if (showViewAll) 1 else 0
 
 		items(
 			count = maxIndex + 1 + extraItems,
 			key = { index ->
-				if (index <= maxIndex) "${scrollKey}_${items[index].id}"
+				if (index <= maxIndex) "${scrollKey}_${effectiveItems[index].id}"
 				else "${scrollKey}_view_all"
 			}
 		) { index ->
 			when {
 				index in 0..maxIndex -> {
-					val item = items[index]
+					val item = effectiveItems[index]
 					val focusKey = itemFocusKey(item.id)
 
 					JellyseerrSearchCard(
@@ -123,8 +126,8 @@ internal fun JellyseerrContentSection(
 				}
 
 				showViewAll && index == maxIndex + 1 -> {
-					val posterUrls = remember(items) {
-						items.shuffled().take(4).mapNotNull { it.posterPath }
+					val posterUrls = remember(effectiveItems) {
+						effectiveItems.shuffled().take(4).mapNotNull { it.posterPath }
 					}
 					JellyseerrViewAllCard(
 						onClick = onViewAllClick,
@@ -262,7 +265,11 @@ internal fun JellyseerrRecentRequestsSection(
 	sectionSpacing: androidx.compose.ui.unit.Dp = 5.dp,
 	sectionInnerSpacing: androidx.compose.ui.unit.Dp = 6.dp,
 	sectionTitleFontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
+	contentHash: Int? = null,
 ) {
+	// Use contentHash as a key to force recomposition when content changes
+	val effectiveRequests = remember(requests, contentHash) { requests }
+
 	Spacer(modifier = Modifier.size(sectionSpacing))
 
 	Text(
@@ -271,7 +278,7 @@ internal fun JellyseerrRecentRequestsSection(
 		fontSize = sectionTitleFontSize,
 	)
 
-	if (requests.isEmpty()) {
+	if (effectiveRequests.isEmpty()) {
 		Spacer(modifier = Modifier.size(sectionInnerSpacing))
 		Text(
 			text = stringResource(R.string.jellyseerr_no_results),
@@ -291,10 +298,10 @@ internal fun JellyseerrRecentRequestsSection(
 			.height(120.dp),
 	) {
 		items(
-			count = requests.size,
-			key = { index -> "recent_request_$index" }
+			count = effectiveRequests.size,
+			key = { index -> "recent_request_${effectiveRequests[index].id}" }
 		) { index ->
-			val item = requests[index]
+			val item = effectiveRequests[index]
 			val requestKey = requestFocusKey(index)
 			JellyseerrRecentRequestCard(
 				item = item,

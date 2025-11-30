@@ -29,6 +29,7 @@ class JellyseerrViewModel(
 		discoveryActions.loadRecentRequests()
 	}
 	private var pendingOverlayAfterExternalPlayback: OverlaySnapshot? = null
+	private var pendingUiStateAfterExternalPlayback: JellyseerrUiState? = null
 	private var pendingOverlayToken: Int = 0
 
 	init {
@@ -182,8 +183,10 @@ class JellyseerrViewModel(
 		val snapshot = detailActions.snapshotOverlayWithStack() ?: return
 		val token = ++lastGlobalOverlayToken
 		pendingOverlayAfterExternalPlayback = snapshot
+		pendingUiStateAfterExternalPlayback = _uiState.value
 		pendingOverlayToken = token
 		lastGlobalOverlaySnapshot = snapshot
+		lastGlobalUiStateSnapshot = pendingUiStateAfterExternalPlayback
 		lastGlobalOverlayToken = token
 	}
 
@@ -192,16 +195,30 @@ class JellyseerrViewModel(
 			pendingOverlayAfterExternalPlayback != null && pendingOverlayToken == lastGlobalOverlayToken -> pendingOverlayAfterExternalPlayback
 			lastGlobalOverlaySnapshot != null -> lastGlobalOverlaySnapshot
 			else -> null
-		} ?: return
+		}
+
+		val uiSnapshot = when {
+			pendingUiStateAfterExternalPlayback != null && pendingOverlayToken == lastGlobalOverlayToken -> pendingUiStateAfterExternalPlayback
+			lastGlobalUiStateSnapshot != null -> lastGlobalUiStateSnapshot
+			else -> null
+		}
+
+		if (overlay == null && uiSnapshot == null) return
 
 		val current = _uiState.value
 		if (current.selectedItem == null && current.selectedPerson == null) {
-			detailActions.restoreOverlay(overlay)
+			if (uiSnapshot != null) {
+				_uiState.value = uiSnapshot.copy(isLoading = false)
+			} else if (overlay != null) {
+				detailActions.restoreOverlay(overlay)
+			}
 		}
 
 		pendingOverlayAfterExternalPlayback = null
+		pendingUiStateAfterExternalPlayback = null
 		pendingOverlayToken = 0
 		lastGlobalOverlaySnapshot = null
+		lastGlobalUiStateSnapshot = null
 	}
 
 	fun saveScrollPosition(key: String, index: Int, offset: Int) {
@@ -231,6 +248,7 @@ class JellyseerrViewModel(
 	companion object {
 		// Static snapshot to survive ViewModel recreation while the app is backgrounded (e.g., during external trailer playback)
 		private var lastGlobalOverlaySnapshot: OverlaySnapshot? = null
+		private var lastGlobalUiStateSnapshot: JellyseerrUiState? = null
 		private var lastGlobalOverlayToken: Int = 0
 	}
 }

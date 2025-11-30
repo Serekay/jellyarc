@@ -18,6 +18,13 @@ internal class JellyseerrDiscoveryActions(
 	private val scope: CoroutineScope,
 	private val requestActions: JellyseerrRequestActions,
 ) {
+	/**
+	 * Computes a hash of the item IDs to detect content changes.
+	 * This helps invalidate the Compose cache when row content changes.
+	 */
+	private fun computeContentHash(items: List<JellyseerrSearchItem>): Int {
+		return items.map { it.id }.hashCode()
+	}
 	fun search(page: Int = 1) {
 		val term = state.value.query.trim()
 		if (term.isBlank()) {
@@ -100,6 +107,8 @@ internal class JellyseerrDiscoveryActions(
 		val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 		state.update {
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["trending"] = computeContentHash(marked)
 			it.copy(
 				isLoading = false,
 				results = marked,
@@ -107,6 +116,7 @@ internal class JellyseerrDiscoveryActions(
 				discoverCurrentPage = 1,
 				discoverHasMore = results.isNotEmpty(),
 				discoverCategory = JellyseerrDiscoverCategory.TRENDING,
+				contentHashes = newHashes,
 			)
 		}
 	}
@@ -134,9 +144,12 @@ internal class JellyseerrDiscoveryActions(
 		val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 		state.update {
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["popular"] = computeContentHash(marked)
 			it.copy(
 				isLoading = false,
 				popularResults = marked,
+				contentHashes = newHashes,
 			)
 		}
 	}
@@ -164,9 +177,12 @@ internal class JellyseerrDiscoveryActions(
 		val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 		state.update {
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["popularTv"] = computeContentHash(marked)
 			it.copy(
 				isLoading = false,
 				popularTvResults = marked,
+				contentHashes = newHashes,
 			)
 		}
 	}
@@ -194,9 +210,12 @@ internal class JellyseerrDiscoveryActions(
 		val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 		state.update {
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["upcomingMovies"] = computeContentHash(marked)
 			it.copy(
 				isLoading = false,
 				upcomingMovieResults = marked,
+				contentHashes = newHashes,
 			)
 		}
 	}
@@ -224,9 +243,12 @@ internal class JellyseerrDiscoveryActions(
 		val marked = JellyseerrRequestMarkers.markItemsWithRequests(resultsWithAvailability, currentRequests)
 
 		state.update {
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["upcomingTv"] = computeContentHash(marked)
 			it.copy(
 				isLoading = false,
 				upcomingTvResults = marked,
+				contentHashes = newHashes,
 			)
 		}
 	}
@@ -246,7 +268,12 @@ internal class JellyseerrDiscoveryActions(
 		val requestsWithAvailability = repository.markAvailableInJellyfin(requests).getOrElse { requests }
 
 		state.update {
-			it.copy(recentRequests = requestsWithAvailability)
+			val newHashes = it.contentHashes.toMutableMap()
+			newHashes["recentRequests"] = computeContentHash(requestsWithAvailability)
+			it.copy(
+				recentRequests = requestsWithAvailability,
+				contentHashes = newHashes,
+			)
 		}
 	}
 

@@ -1001,6 +1001,20 @@ internal fun JellyseerrDetail(
                                                     aspectRatio = 2f / 3f,
                                                     scaleType = ImageView.ScaleType.CENTER_CROP,
                                                 )
+                                            } else {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color(0xFF333333)),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Image(
+                                                        imageVector = ImageVector.vectorResource(id = R.drawable.ic_clapperboard),
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(48.dp),
+                                                        colorFilter = ColorFilter.tint(Color(0xFF888888)),
+                                                    )
+                                                }
                                             }
                                             badgeData?.let { (badgeText, badgeColor, badgeIcon) ->
                                                 Box(

@@ -75,6 +75,7 @@ data class JellyseerrUiState(
 	val searchCurrentPage: Int = 0,
 	val searchTotalPages: Int = 0,
 	val searchHasMore: Boolean = false,
+	val contentHashes: Map<String, Int> = emptyMap(),
 )
 
 data class ScrollPosition(

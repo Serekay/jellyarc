@@ -72,8 +72,10 @@ fun JellyseerrSearchScreen(
 	LaunchedEffect(Unit) {
 		kotlinx.coroutines.delay(150) // Small delay to ensure UI is ready
 		searchFocusRequester.requestFocus()
-		kotlinx.coroutines.delay(50) // Extra delay before showing keyboard
-		keyboardController?.show()
+		repeat(3) { attempt ->
+			kotlinx.coroutines.delay(80L * (attempt + 1)) // staggered retries
+			keyboardController?.show()
+		}
 	}
 
 	// Debounced search with 450ms delay
@@ -123,6 +125,7 @@ fun JellyseerrSearchScreen(
 				modifier = Modifier
 					.fillMaxWidth()
 					.focusRequester(searchFocusRequester),
+				focusRequester = searchFocusRequester,
 				showKeyboardOnFocus = true,
 				placeholder = stringResource(R.string.jellyseerr_search_hint),
 			)

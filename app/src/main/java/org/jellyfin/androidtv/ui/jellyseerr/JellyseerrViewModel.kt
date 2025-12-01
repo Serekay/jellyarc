@@ -259,7 +259,14 @@ class JellyseerrViewModel(
 	}
 
 	fun enterSearchMode() {
-		_uiState.update { it.copy(isSearchMode = true, query = "") }
+		_uiState.update {
+			it.copy(
+				isSearchMode = true,
+				query = "",
+				lastFocusedItemId = null,
+				lastFocusedViewAllKey = null,
+			)
+		}
 	}
 
 	fun exitSearchMode() {

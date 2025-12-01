@@ -15,10 +15,13 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -27,6 +30,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import android.view.inputmethod.InputMethodManager
+import kotlinx.coroutines.delay
 import org.jellyfin.androidtv.R
 import org.jellyfin.androidtv.ui.base.Icon
 import org.jellyfin.androidtv.ui.base.JellyfinTheme
@@ -40,11 +48,33 @@ fun SearchTextInput(
 	onQueryChange: (query: String) -> Unit,
 	onQuerySubmit: () -> Unit,
 	modifier: Modifier = Modifier,
+	focusRequester: FocusRequester? = null,
 	showKeyboardOnFocus: Boolean = true,
 	placeholder: String? = null,
 ) {
 	val interactionSource = remember { MutableInteractionSource() }
 	val focused by interactionSource.collectIsFocusedAsState()
+	val keyboardController = LocalSoftwareKeyboardController.current
+	val inputFocusRequester = focusRequester
+	val context = LocalContext.current
+	val view = LocalView.current
+
+	LaunchedEffect(inputFocusRequester) {
+		inputFocusRequester?.requestFocus()
+	}
+
+	LaunchedEffect(focused, showKeyboardOnFocus) {
+		if (focused && showKeyboardOnFocus) {
+			repeat(3) { attempt ->
+				keyboardController?.show()
+				val imm = context.getSystemService(InputMethodManager::class.java)
+				imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+				imm?.toggleSoftInput(InputMethodManager.SHOW_FORCED, InputMethodManager.HIDE_IMPLICIT_ONLY)
+				// Give the system time to show the keyboard; retry a couple times for TV input lag
+				delay(120L * (attempt + 1))
+			}
+		}
+	}
 
 	// Use transparent white border instead of theme purple
 	val borderColor = if (focused) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f)
@@ -58,6 +88,13 @@ fun SearchTextInput(
 	) {
 		BasicTextField(
 			modifier = modifier
+				.then(
+					if (inputFocusRequester != null) {
+						Modifier.focusRequester(inputFocusRequester)
+					} else {
+						Modifier
+					}
+				)
 				.focusable(interactionSource = interactionSource),
 			value = query,
 			singleLine = true,

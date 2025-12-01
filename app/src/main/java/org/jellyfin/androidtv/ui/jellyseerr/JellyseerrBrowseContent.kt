@@ -104,6 +104,8 @@ internal fun JellyseerrContent(
 	val viewAllFocusRequesters = remember { mutableStateMapOf<String, FocusRequester>() }
 	val lastRestoredFocus = remember { mutableStateOf<Pair<String?, String?>>(null to null) }
 	val itemFocusKey: (String, Int) -> String = { row, id -> "$row-$id" }
+	var isSearchButtonFocused by remember { mutableStateOf(false) }
+	var suppressRestore by remember { mutableStateOf(false) }
 
 	LaunchedEffect(
 		state.selectedItem,
@@ -111,21 +113,32 @@ internal fun JellyseerrContent(
 		state.selectedPerson,
 		state.lastFocusedItemId,
 		state.lastFocusedViewAllKey,
+		isSearchButtonFocused,
 	) {
 		val browsing = state.selectedItem == null &&
 			state.selectedPerson == null &&
-			!state.showAllTrendsGrid
+			!state.showAllTrendsGrid &&
+			!isSearchButtonFocused
 
 		if (!browsing) {
 			lastRestoredFocus.value = null to null
 			return@LaunchedEffect
 		}
 
+		if (isSearchButtonFocused || suppressRestore) {
+			lastRestoredFocus.value = null to null
+			return@LaunchedEffect
+		}
+
+		if (suppressRestore) return@LaunchedEffect
+
 		val targetPair = state.lastFocusedItemId to state.lastFocusedViewAllKey
 		if (lastRestoredFocus.value == targetPair) return@LaunchedEffect
 
 		// Längerer Delay um sicherzustellen, dass Scroll-Animation abgeschlossen ist
 		delay(400)
+
+		if (isSearchButtonFocused || suppressRestore) return@LaunchedEffect
 
 		val itemId = state.lastFocusedItemId
 		if (itemId != null) {
@@ -254,23 +267,7 @@ internal fun JellyseerrContent(
 					modifier = Modifier
 						.padding(bottom = 16.dp)
 						.clip(RoundedCornerShape(16.dp))
-						.background(
-							if (searchButtonFocused) {
-								Brush.horizontalGradient(
-									colors = listOf(
-										Color(0xFF6366F1),
-										Color(0xFF8B5CF6),
-									)
-								)
-							} else {
-								Brush.horizontalGradient(
-									colors = listOf(
-										Color(0xFF1F2937),
-										Color(0xFF374151),
-									)
-								)
-							}
-						)
+						.background(Color.Transparent)
 						.border(
 							width = if (searchButtonFocused) 3.dp else 1.dp,
 							color = if (searchButtonFocused) Color.White else Color.White.copy(alpha = 0.2f),
@@ -281,6 +278,17 @@ internal fun JellyseerrContent(
 							indication = null
 						) { viewModel.enterSearchMode() }
 						.focusable(interactionSource = searchButtonInteraction)
+						.onFocusChanged { focusState ->
+							isSearchButtonFocused = focusState.isFocused
+							if (focusState.isFocused) {
+								suppressRestore = true
+								lastRestoredFocus.value = null to null
+								viewModel.updateLastFocusedItem(null)
+								viewModel.updateLastFocusedViewAll(null)
+							} else {
+								suppressRestore = false
+							}
+						}
 						.padding(horizontal = 24.dp, vertical = 16.dp)
 				) {
 					Row(
@@ -855,5 +863,3 @@ internal fun JellyseerrRecentRequestCard(
 		}
 	}
 }
-
-

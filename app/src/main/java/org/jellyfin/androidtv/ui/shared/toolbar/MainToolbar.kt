@@ -50,7 +50,6 @@ enum class MainToolbarActiveButton {
 	Home,
 	Search,
 	Requests,
-
 	None,
 }
 

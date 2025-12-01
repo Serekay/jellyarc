@@ -1,9 +1,11 @@
 package org.jellyfin.androidtv.ui.search.composable
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
@@ -30,6 +32,7 @@ import org.jellyfin.androidtv.ui.base.Icon
 import org.jellyfin.androidtv.ui.base.JellyfinTheme
 import org.jellyfin.androidtv.ui.base.LocalTextStyle
 import org.jellyfin.androidtv.ui.base.ProvideTextStyle
+import org.jellyfin.androidtv.ui.base.Text
 
 @Composable
 fun SearchTextInput(
@@ -38,18 +41,18 @@ fun SearchTextInput(
 	onQuerySubmit: () -> Unit,
 	modifier: Modifier = Modifier,
 	showKeyboardOnFocus: Boolean = true,
+	placeholder: String? = null,
 ) {
 	val interactionSource = remember { MutableInteractionSource() }
 	val focused by interactionSource.collectIsFocusedAsState()
 
-	val color = when {
-		focused -> JellyfinTheme.colorScheme.inputFocused to JellyfinTheme.colorScheme.onInputFocused
-		else -> JellyfinTheme.colorScheme.input to JellyfinTheme.colorScheme.onInput
-	}
+	// Use transparent white border instead of theme purple
+	val borderColor = if (focused) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f)
+	val textColor = androidx.compose.ui.graphics.Color.White
 
 	ProvideTextStyle(
 		LocalTextStyle.current.copy(
-			color = color.second,
+			color = textColor,
 			fontSize = 16.sp,
 		)
 	) {
@@ -68,7 +71,7 @@ fun SearchTextInput(
 				showKeyboardOnFocus = showKeyboardOnFocus,
 			),
 			textStyle = LocalTextStyle.current,
-			cursorBrush = SolidColor(color.first),
+			cursorBrush = SolidColor(borderColor),
 			decorationBox = { innerTextField ->
 				val scale = if (focused) 1.05f else 1f
 
@@ -80,12 +83,25 @@ fun SearchTextInput(
 							scaleY = scale,
 							shadowElevation = if (focused) 16f else 0f,
 						)
-						.border(2.dp, color.first, RoundedCornerShape(percent = 30))
+						.background(
+							color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f),
+							shape = RoundedCornerShape(percent = 30)
+						)
+						.border(2.dp, borderColor, RoundedCornerShape(percent = 30))
 						.padding(12.dp),
 				) {
 					Icon(ImageVector.vectorResource(R.drawable.ic_search), contentDescription = null)
 					Spacer(Modifier.width(12.dp))
-					innerTextField()
+					Box(modifier = Modifier.weight(1f)) {
+						if (query.isEmpty() && placeholder != null) {
+							Text(
+								text = placeholder,
+								color = textColor.copy(alpha = 0.5f),
+								fontSize = 16.sp
+							)
+						}
+						innerTextField()
+					}
 				}
 			},
 		)

@@ -650,4 +650,8 @@
 	<string name="jellyseerr_collection_label">%1$s collection</string>
 	<string name="jellyseerr_collection_show">Show</string>
 	<string name="jellyseerr_no_description">No description currently available.</string>
+	<string name="jellyseerr_search_title">Search</string>
+	<string name="jellyseerr_search_button">Search in Jellyseerr</string>
+	<string name="jellyseerr_search_hint">Search Jellyseerr for movies, series and actors</string>
+	<string name="jellyseerr_search_description">Use the remote to type your search query</string>
 </resources>

@@ -46,6 +46,7 @@ data class JellyseerrUiState(
 	val selectedMovie: JellyseerrMovieDetails? = null,
 	val showAllTrendsGrid: Boolean = false,
 	val showSearchResultsGrid: Boolean = false,
+	val isSearchMode: Boolean = false,
 	val requestStatusMessage: String? = null,
 	val discoverCurrentPage: Int = 1,
 	val discoverHasMore: Boolean = true,

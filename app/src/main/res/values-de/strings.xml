@@ -650,4 +650,8 @@
 	<string name="jellyseerr_collection_label">%1$s Sammlung</string>
 	<string name="jellyseerr_collection_show">Anzeigen</string>
 	<string name="jellyseerr_no_description">Momentan noch keine Beschreibung verfügbar.</string>
+	<string name="jellyseerr_search_title">Suche</string>
+	<string name="jellyseerr_search_button">In Jellyseerr suchen</string>
+	<string name="jellyseerr_search_hint">Suche auf Jellyseerr nach Filmen, Serien und Schauspielern</string>
+	<string name="jellyseerr_search_description">Nutze die Fernbedienung, um deine Suchanfrage einzugeben</string>
 </resources>

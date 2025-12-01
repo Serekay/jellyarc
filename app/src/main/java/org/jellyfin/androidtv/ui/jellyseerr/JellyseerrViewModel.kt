@@ -250,6 +250,22 @@ class JellyseerrViewModel(
 		detailActions.closePerson()
 	}
 
+	fun clearQuery() {
+		_uiState.update { it.copy(query = "", results = emptyList(), searchFilter = JellyseerrSearchFilter.ALL) }
+	}
+
+	fun clearSearchResults() {
+		_uiState.update { it.copy(results = emptyList()) }
+	}
+
+	fun enterSearchMode() {
+		_uiState.update { it.copy(isSearchMode = true, query = "") }
+	}
+
+	fun exitSearchMode() {
+		_uiState.update { it.copy(isSearchMode = false, query = "", results = emptyList(), searchFilter = JellyseerrSearchFilter.ALL) }
+	}
+
 	companion object {
 		// Static snapshot to survive ViewModel recreation while the app is backgrounded (e.g., during external trailer playback)
 		private var lastGlobalOverlaySnapshot: OverlaySnapshot? = null

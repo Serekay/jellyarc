@@ -212,7 +212,7 @@ private fun JellyseerrScreen(
             animationSpec = tween(durationMillis = 300),
         )
         val selectedItem = state.selectedItem
-        val isSearching = state.query.isNotBlank() || state.showSearchResultsGrid
+        val isSearching = state.isSearchMode
         if (selectedItem != null) {
             val backdropUrl = state.selectedMovie?.backdropPath ?: selectedItem.backdropPath
 
@@ -264,10 +264,10 @@ private fun JellyseerrScreen(
 			val state by viewModel.uiState.collectAsState()
 
 			// Show toolbar in normal browse mode or when viewing details/person
-			// Hide toolbar only in grid view when not viewing details
+			// Hide toolbar in grid view or search mode
 			val showToolbar = state.selectedItem != null ||
 				state.selectedPerson != null ||
-				(!state.showAllTrendsGrid && !state.showSearchResultsGrid)
+				(!state.showAllTrendsGrid && !state.isSearchMode)
 
 			if (showToolbar) {
 				MainToolbar(MainToolbarActiveButton.Requests)
@@ -282,12 +282,20 @@ private fun JellyseerrScreen(
 			} else {
 				// Box um Browse und Detail-Ansichten zu überlagern
 				Box(modifier = Modifier.fillMaxSize()) {
-					// Browse-Ansicht (JellyseerrContent) - bleibt immer im Tree
-					JellyseerrContent(
-						viewModel = viewModel,
-						onShowSeasonDialog = { showSeasonDialog = true },
-						firstCastFocusRequester = firstCastFocusRequester,
-					)
+					// Zeige entweder die Search-Screen oder die Browse-Ansicht
+					if (state.isSearchMode) {
+						JellyseerrSearchScreen(
+							viewModel = viewModel,
+							onNavigateBack = { viewModel.exitSearchMode() }
+						)
+					} else {
+						// Browse-Ansicht (JellyseerrContent) - bleibt immer im Tree
+						JellyseerrContent(
+							viewModel = viewModel,
+							onShowSeasonDialog = { showSeasonDialog = true },
+							firstCastFocusRequester = firstCastFocusRequester,
+						)
+					}
 
 					// Detail-Overlay - wird über der Browse-Ansicht angezeigt
 					if (selectedItem != null) {

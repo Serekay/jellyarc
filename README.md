@@ -1,8 +1,9 @@
-# Jellyfin Jellyseerr TV Integration
+# Jellyfin Jellyseerr TV Integration with build in Tailscale support
 
-Client-side integration that brings Jellyseerr discovery and requests into Jellyfin for Android TV.
+Client-side integration that brings Jellyseerr discovery and requests into Jellyfin for Android TV. You can choose if you want to connect local or with Tailescale VPN
 
 ## Prerequisite: Server Plugin (Required)
+- Remove already installed app if you have a version < v1.1.0
 - Install and configure **Jellyfin Requests Bridge** on your Jellyfin server first, otherwise the Jellyseerr discovery/request features will not work.
 - Plugin repo: https://github.com/Serekay/jellyfin-requests-bridge
 
@@ -23,7 +24,7 @@ Client-side integration that brings Jellyseerr discovery and requests into Jelly
 
 ### Option A: Directly on the TV with a browser (e.g., BrowseHere)
 1. Open a browser on the TV (e.g., **BrowseHere**).
-2. Go to the releases: https://github.com/Serekay/jellyfin-jellyserr-tv/releases
+2. Go to the releases: https://github.com/Serekay/jellyarc/releases
 3. Download the latest `app-release.apk`.
 4. After download, open the APK and confirm installation (enable “Unknown sources” if prompted).
 5. If you see “App not installed”: check free storage on the TV, free up space if needed, and try again.

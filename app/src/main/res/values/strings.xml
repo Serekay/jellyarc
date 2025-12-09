@@ -695,9 +695,9 @@
 
 	<!-- Server Address Selection -->
 	<string name="server_address_selection_title">Select Server Address</string>
-	<string name="server_address_selection_message">How would you like to set the server address?</string>
-	<string name="server_address_auto">Automatic</string>
-	<string name="server_address_manual">Enter Manually</string>
+	<string name="server_address_selection_message">If your server administrator has configured the plugin, you can connect automatically. Otherwise, please enter the server address manually.</string>
+	<string name="server_address_auto">Automatic (via Plugin)</string>
+	<string name="server_address_manual">Manual Entry</string>
 	<string name="fetching_server_url">Fetching server URL from plugin…</string>
 	<string name="server_url_fetch_failed_title">Automatic Address Failed</string>
 	<string name="server_url_fetch_failed_message">Could not automatically retrieve server address:\n\n%1$s\n\nWould you like to enter the address manually?</string>

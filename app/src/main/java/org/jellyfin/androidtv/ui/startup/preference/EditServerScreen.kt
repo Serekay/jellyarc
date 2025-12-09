@@ -279,21 +279,22 @@ class EditServerScreen : OptionsFragment() {
 		onCancel: () -> Unit = {},
 		onAddressSet: (String) -> Unit
 	) {
-		// First ask: Auto or Manual?
+		// First ask: Manual, Auto, or Cancel?
+		// Button order: Negative=Manual (left), Neutral=Auto (middle), Positive=Cancel (right)
 		AlertDialog.Builder(requireContext())
 			.setTitle(R.string.server_address_selection_title)
 			.setMessage(R.string.server_address_selection_message)
-			.setPositiveButton(R.string.server_address_auto) { _, _ ->
+			.setNegativeButton(R.string.server_address_manual) { _, _ ->
+				// MANUAL: Show input dialog
+				showManualAddressInputDialog(onCancel, onAddressSet)
+			}
+			.setNeutralButton(R.string.server_address_auto) { _, _ ->
 				// AUTO: Fetch from plugin
 				lifecycleScope.launch {
 					fetchJellyfinUrlFromPlugin(server, useTailscale, onAddressSet, onCancel)
 				}
 			}
-			.setNeutralButton(R.string.server_address_manual) { _, _ ->
-				// MANUAL: Show input dialog
-				showManualAddressInputDialog(onCancel, onAddressSet)
-			}
-			.setNegativeButton(R.string.lbl_cancel) { _, _ ->
+			.setPositiveButton(R.string.lbl_cancel) { _, _ ->
 				onCancel()
 			}
 			.setOnCancelListener {

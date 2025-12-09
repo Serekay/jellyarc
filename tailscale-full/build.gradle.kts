@@ -71,6 +71,6 @@ dependencies {
 	// Timber for logging
 	implementation(libs.timber)
 
-	// Use the prebaked libtailscale AAR
-	api(files("../third_party/tailscale-android/android/libs/libtailscale.aar"))
+	// libtailscale AAR - compileOnly here, actual dependency provided by app module
+	compileOnly(files("../third_party/tailscale-android/android/libs/libtailscale.aar"))
 }

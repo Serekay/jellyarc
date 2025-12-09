@@ -22,6 +22,6 @@ android {
 }
 
 dependencies {
-	// Re-export the prebuilt Tailscale Android core (produced via third_party/tailscale-android).
-	api(files("../third_party/tailscale-android/android/libs/libtailscale.aar"))
+	// libtailscale AAR - compileOnly here, actual dependency provided by app module
+	compileOnly(files("../third_party/tailscale-android/android/libs/libtailscale.aar"))
 }

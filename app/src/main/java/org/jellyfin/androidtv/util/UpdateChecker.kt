@@ -13,7 +13,7 @@ import java.net.URL
 
 object UpdateChecker {
 	private const val TAG = "UpdateChecker"
-	private const val LATEST_RELEASE_URL = "https://api.github.com/repos/Serekay/jellyfin-jellyserr-tv/releases/latest"
+	private const val LATEST_RELEASE_URL = "https://api.github.com/repos/Serekay/jellyarc/releases/latest"
 	private const val APK_NAME = "jellyarc-update.apk"
 
 	data class ReleaseInfo(

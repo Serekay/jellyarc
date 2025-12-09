@@ -76,57 +76,91 @@ object TailscaleManager {
 	/**
 	 * Wartet, bis der Login abgeschlossen ist.
 	 * Beobachtet BEIDE Events: loginFinished UND State (wie die offizielle App!)
+	 *
+	 * Android 10 Kompatibilität: Defensive error handling für StateFlow crashes
 	 */
 	suspend fun waitUntilLoginFinished(timeoutMs: Long = 120_000L): Boolean = withContext(Dispatchers.IO) {
-		ensureApp().onFailure {
-			Timber.e("waitUntilLoginFinished: App not initialized")
-			return@withContext false
-		}
+		try {
+			ensureApp().onFailure {
+				Timber.e("waitUntilLoginFinished: App not initialized")
+				return@withContext false
+			}
 
-		Timber.d("waitUntilLoginFinished: Waiting for login completion (timeout=${timeoutMs}ms)")
+			Timber.d("waitUntilLoginFinished: Waiting for login completion (timeout=${timeoutMs}ms)")
 
-		// Aktuellen State und loginFinished-Wert loggen
-		val currentState = Notifier.state.value
-		val currentLoginFinished = Notifier.loginFinished.value
-		Timber.d("waitUntilLoginFinished: Current state: $currentState, loginFinished: '$currentLoginFinished'")
+			// Aktuellen State und loginFinished-Wert loggen - mit defensive null checks
+			val currentState = try { Notifier.state.value } catch (e: Exception) {
+				Timber.w(e, "Failed to get current state")
+				Ipn.State.NoState
+			}
+			val currentLoginFinished = try { Notifier.loginFinished.value } catch (e: Exception) {
+				Timber.w(e, "Failed to get loginFinished")
+				""
+			}
+			Timber.d("waitUntilLoginFinished: Current state: $currentState, loginFinished: '$currentLoginFinished'")
 
-		// Warte auf ENTWEDER loginFinished Event ODER State wird Running
-		// (Die offizielle App wartet nur auf State.Running, aber wir beobachten beides)
-		var success = false
-		val result = withTimeoutOrNull(timeoutMs) {
-			// Beobachte beide Flows gleichzeitig
-			kotlinx.coroutines.flow.combine(
-				Notifier.state,
-				Notifier.loginFinished
-			) { state, loginFinished ->
-				Timber.d("waitUntilLoginFinished: Update - state=$state, loginFinished='$loginFinished'")
+			// Warte auf ENTWEDER loginFinished Event ODER State wird Running
+			// (Die offizielle App wartet nur auf State.Running, aber wir beobachten beides)
+			var success = false
+			val result = withTimeoutOrNull(timeoutMs) {
+				try {
+					// Beobachte beide Flows gleichzeitig
+					kotlinx.coroutines.flow.combine(
+						Notifier.state,
+						Notifier.loginFinished
+					) { state, loginFinished ->
+						Timber.d("waitUntilLoginFinished: Update - state=$state, loginFinished='$loginFinished'")
 
-				// Login ist erfolgreich wenn:
-				// 1. State ist Running ODER
-				// 2. loginFinished hat einen neuen nicht-leeren Wert
-				val stateIsRunning = state == Ipn.State.Running
-				val loginFinishedReceived = !loginFinished.isNullOrEmpty() && loginFinished != currentLoginFinished
+						// Login ist erfolgreich wenn:
+						// 1. State ist Running ODER
+						// 2. loginFinished hat einen neuen nicht-leeren Wert
+						val stateIsRunning = state == Ipn.State.Running
+						val loginFinishedReceived = !loginFinished.isNullOrEmpty() && loginFinished != currentLoginFinished
 
-				if (stateIsRunning || loginFinishedReceived) {
-					Timber.d("waitUntilLoginFinished: Login complete! (stateRunning=$stateIsRunning, loginFinished=$loginFinishedReceived)")
-					success = true
-					true
-				} else {
-					false
+						if (stateIsRunning || loginFinishedReceived) {
+							Timber.d("waitUntilLoginFinished: Login complete! (stateRunning=$stateIsRunning, loginFinished=$loginFinishedReceived)")
+							success = true
+							true
+						} else {
+							false
+						}
+					}.first { it }
+				} catch (e: Exception) {
+					Timber.e(e, "waitUntilLoginFinished: Error in Flow.combine (Android 10 compatibility issue?)")
+					// Fallback: Nur auf State warten
+					try {
+						Notifier.state.first { state ->
+							val isRunning = state == Ipn.State.Running
+							if (isRunning) {
+								success = true
+								Timber.d("waitUntilLoginFinished: Fallback - State is Running")
+							}
+							isRunning
+						}
+					} catch (e2: Exception) {
+						Timber.e(e2, "waitUntilLoginFinished: Fallback also failed")
+					}
 				}
-			}.first { it }
-		}
+			}
 
-		if (success) {
-			Timber.d("waitUntilLoginFinished: SUCCESS")
-		} else {
-			Timber.e("waitUntilLoginFinished: TIMEOUT")
-			val finalState = Notifier.state.value
-			val finalLoginFinished = Notifier.loginFinished.value
-			Timber.e("waitUntilLoginFinished: Final state=$finalState, loginFinished='$finalLoginFinished'")
-		}
+			if (success) {
+				Timber.d("waitUntilLoginFinished: SUCCESS")
+			} else {
+				Timber.e("waitUntilLoginFinished: TIMEOUT")
+				try {
+					val finalState = Notifier.state.value
+					val finalLoginFinished = Notifier.loginFinished.value
+					Timber.e("waitUntilLoginFinished: Final state=$finalState, loginFinished='$finalLoginFinished'")
+				} catch (e: Exception) {
+					Timber.e(e, "waitUntilLoginFinished: Could not get final state")
+				}
+			}
 
-		success
+			success
+		} catch (e: Exception) {
+			Timber.e(e, "waitUntilLoginFinished: Unexpected error")
+			false
+		}
 	}
 
 	/**
@@ -221,14 +255,28 @@ object TailscaleManager {
 	 * 5. Auf Notifier.browseToURL warten (dort kommt die Login-URL mit Code)
 	 */
 	suspend fun requestLoginCode(): Result<String> = withContext(Dispatchers.IO) {
-		ensureApp().onFailure {
-			return@withContext Result.failure(IllegalStateException("Tailscale not initialized: ${lastInitError ?: "unknown"}"))
+		// Defensive check für Android 10 Kompatibilität
+		val appInstance = try {
+			ensureApp().getOrThrow()
+			app
+		} catch (e: Exception) {
+			Timber.e(e, "requestLoginCode: Failed to initialize Tailscale app")
+			return@withContext Result.failure(IllegalStateException("Tailscale not initialized: ${e.message}"))
+		}
+
+		if (appInstance == null) {
+			Timber.e("requestLoginCode: App instance is null after initialization")
+			return@withContext Result.failure(IllegalStateException("Tailscale app instance is null"))
 		}
 
 		// Fresh login vorbereiten (logout + reset-auth)
 		Timber.d("requestLoginCode: preparing fresh login (logout + reset-auth)")
-		logout()
-		resetAuth()
+		try {
+			logout()
+			resetAuth()
+		} catch (e: Exception) {
+			Timber.w(e, "requestLoginCode: logout/resetAuth failed (continuing anyway)")
+		}
 
 		// Prefs setzen: LoggedOut=true, WantRunning=false
 		val c = client ?: return@withContext Result.failure(IllegalStateException("Client not ready"))
@@ -269,11 +317,17 @@ object TailscaleManager {
 
 		// WICHTIG: Vor startLoginInteractive den browseToURL Flow schon beobachten
 		// (sonst verpassen wir ggf. den Event)
-		val loginUrlDeferred = app!!.applicationScope.async {
+		// Defensive: Nutze CoroutineScope statt app.applicationScope für bessere Android 10 Kompatibilität
+		val loginUrlDeferred = CoroutineScope(Dispatchers.IO).async {
 			Timber.d("Waiting for Notifier.browseToURL...")
-			withTimeoutOrNull(30_000L) {
-				// Warte auf einen nicht-null Wert
-				Notifier.browseToURL.first { it != null }
+			try {
+				withTimeoutOrNull(30_000L) {
+					// Warte auf einen nicht-null Wert
+					Notifier.browseToURL.first { it != null }
+				}
+			} catch (e: Exception) {
+				Timber.e(e, "Error waiting for browseToURL")
+				null
 			}
 		}
 

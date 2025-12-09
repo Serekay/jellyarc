@@ -13,6 +13,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import org.jellyfin.androidtv.R
 import org.jellyfin.androidtv.auth.model.Server
 import org.jellyfin.androidtv.auth.repository.ServerUserRepository
@@ -274,15 +279,41 @@ class EditServerScreen : OptionsFragment() {
 		onCancel: () -> Unit = {},
 		onAddressSet: (String) -> Unit
 	) {
+		// First ask: Auto or Manual?
+		AlertDialog.Builder(requireContext())
+			.setTitle(R.string.server_address_selection_title)
+			.setMessage(R.string.server_address_selection_message)
+			.setPositiveButton(R.string.server_address_auto) { _, _ ->
+				// AUTO: Fetch from plugin
+				lifecycleScope.launch {
+					fetchJellyfinUrlFromPlugin(server, useTailscale, onAddressSet, onCancel)
+				}
+			}
+			.setNeutralButton(R.string.server_address_manual) { _, _ ->
+				// MANUAL: Show input dialog
+				showManualAddressInputDialog(onCancel, onAddressSet)
+			}
+			.setNegativeButton(R.string.lbl_cancel) { _, _ ->
+				onCancel()
+			}
+			.setOnCancelListener {
+				onCancel()
+			}
+			.show()
+	}
+
+	private fun showManualAddressInputDialog(
+		onCancel: () -> Unit,
+		onAddressSet: (String) -> Unit
+	) {
 		val editText = EditText(requireContext()).apply {
 			hint = getString(R.string.edit_server_address_hint)
-			// Leave empty - user must enter the full address from admin
 		}
 		val dialog = AlertDialog.Builder(requireContext())
 			.setTitle(R.string.edit_server_address_title)
 			.setMessage(R.string.edit_server_address_message)
 			.setView(editText)
-			.setPositiveButton(R.string.lbl_ok, null) // Set to null. We override the handler later.
+			.setPositiveButton(R.string.lbl_ok, null)
 			.setNegativeButton(R.string.lbl_cancel) { _, _ ->
 				onCancel()
 			}
@@ -300,15 +331,11 @@ class EditServerScreen : OptionsFragment() {
 					return@setOnClickListener
 				}
 
-				// Reset error and show progress
 				editText.error = null
 				showProgressDialog()
 
 				lifecycleScope.launch {
-					// Use centralized address normalization
 					val addressToTest = normalizeServerAddress(newAddress)
-
-					// Validiere die Adresse (jellyfin.discovery.getAddressCandidates macht schon Smart-Parsing)
 					val isValid = try {
 						startupViewModel.testServerAddress(addressToTest)
 					} catch (e: Exception) {
@@ -332,6 +359,91 @@ class EditServerScreen : OptionsFragment() {
 			}
 		}
 		dialog.show()
+	}
+
+	private suspend fun fetchJellyfinUrlFromPlugin(
+		server: Server,
+		useTailscale: Boolean,
+		onSuccess: (String) -> Unit,
+		onError: () -> Unit
+	) = withContext(Dispatchers.IO) {
+		try {
+			withContext(Dispatchers.Main) {
+				updateProgressDialog(getString(R.string.fetching_server_url))
+			}
+
+			// WICHTIG: Wir nutzen die AKTUELLE Server-Adresse um das Plugin zu erreichen
+			// Das Plugin gibt uns dann die NEUE Adresse zurück (VPN oder lokal)
+			val jellyfinBase = server.address.trimEnd('/')
+
+			// Wir fragen nach der Adresse die wir haben WOLLEN (nicht die wir haben)
+			val endpoint = if (useTailscale) {
+				"$jellyfinBase/plugins/requests/tailscale/jellyfinbase"
+			} else {
+				"$jellyfinBase/plugins/requests/jellyfinbase"
+			}
+
+			timber.log.Timber.d("Fetching Jellyfin URL from plugin: $endpoint (current: $jellyfinBase, want: ${if (useTailscale) "VPN" else "local"})")
+
+			// Simple HTTP call - we just need the JSON
+			val client = OkHttpClient()
+			val request = Request.Builder()
+				.url(endpoint)
+				.build()
+
+			client.newCall(request).execute().use { response ->
+				withContext(Dispatchers.Main) {
+					hideProgressDialog()
+				}
+
+				if (!response.isSuccessful) {
+					throw Exception("HTTP ${response.code}")
+				}
+
+				val body = response.body?.string() ?: throw Exception("Empty response")
+				val json = JSONObject(body.trimStart().removePrefix("\uFEFF"))
+				val success = json.optBoolean("success", false)
+				val jellyfinUrl = json.optString("jellyfinBase").trim()
+
+				if (!success || jellyfinUrl.isBlank()) {
+					throw Exception("Plugin returned invalid data")
+				}
+
+				timber.log.Timber.d("Fetched Jellyfin URL from plugin: $jellyfinUrl")
+
+				// Validate the URL
+				val isValid = try {
+					startupViewModel.testServerAddress(jellyfinUrl)
+				} catch (e: Exception) {
+					timber.log.Timber.e(e, "Auto-fetched address validation failed")
+					false
+				}
+
+				if (isValid) {
+					withContext(Dispatchers.Main) {
+						onSuccess(jellyfinUrl)
+					}
+				} else {
+					throw Exception("Fetched URL could not be validated")
+				}
+			}
+		} catch (e: Exception) {
+			timber.log.Timber.e(e, "Failed to fetch Jellyfin URL from plugin")
+
+			withContext(Dispatchers.Main) {
+				hideProgressDialog()
+				AlertDialog.Builder(requireContext())
+					.setTitle(R.string.server_url_fetch_failed_title)
+					.setMessage(getString(R.string.server_url_fetch_failed_message, e.message))
+					.setPositiveButton(R.string.server_address_manual) { _, _ ->
+						showManualAddressInputDialog(onError, onSuccess)
+					}
+					.setNegativeButton(R.string.lbl_cancel) { _, _ ->
+						onError()
+					}
+					.show()
+			}
+		}
 	}
 
 	override val screen by optionsScreen {
@@ -395,34 +507,44 @@ class EditServerScreen : OptionsFragment() {
 							timber.log.Timber.d("Tailscale deactivation requested")
 							lifecycleScope.launch {
 								try {
-									// Step 1: Stop VPN
-									updateProgressDialog(getString(R.string.tailscale_step_stopping_vpn))
-									TailscaleManager.stopVpn()
-									kotlinx.coroutines.delay(500) // Brief pause
-									hideProgressDialog()
-
-									// Step 2: Ask for new local address
+									// Step 1: Ask for new local address (WHILE VPN is still running!)
+									// Das ist wichtig - wir müssen das Plugin erreichen können
 									showAddressInputDialog(
 										server = server,
 										useTailscale = false,
 										onCancel = {
-											// User cancelled - re-enable VPN
-											lifecycleScope.launch {
-												try {
-													TailscaleManager.startVpn()
-												} catch (e: Exception) {
-													timber.log.Timber.w(e, "Failed to restart VPN after cancel")
-												}
-												isSwitching = false
-												rebuild()
-											}
+											// User cancelled - keep VPN running
+											isSwitching = false
+											rebuild()
 										},
 										onAddressSet = { newAddress ->
-											// Success - save settings
-											startupViewModel.setServerAddress(serverUUID, newAddress)
-											startupViewModel.setTailscaleEnabled(serverUUID, false)
-											isSwitching = false
-											showRestartDialog()
+											// Step 2: Now stop VPN AFTER we got the address
+											lifecycleScope.launch {
+												try {
+													updateProgressDialog(getString(R.string.tailscale_step_stopping_vpn))
+													TailscaleManager.stopVpn()
+													kotlinx.coroutines.delay(500)
+													hideProgressDialog()
+
+													// Step 3: Save settings
+													startupViewModel.setServerAddress(serverUUID, newAddress)
+													startupViewModel.setTailscaleEnabled(serverUUID, false)
+													isSwitching = false
+													showRestartDialog()
+												} catch (e: Exception) {
+													timber.log.Timber.e(e, "Failed to stop VPN")
+													hideProgressDialog()
+													AlertDialog.Builder(requireContext())
+														.setTitle(R.string.tailscale_error_title)
+														.setMessage(getString(R.string.tailscale_error_generic, e.message))
+														.setPositiveButton(R.string.lbl_ok, null)
+														.setOnDismissListener {
+															isSwitching = false
+															rebuild()
+														}
+														.show()
+												}
+											}
 										}
 									)
 								} catch (e: Exception) {

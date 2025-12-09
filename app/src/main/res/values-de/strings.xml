@@ -664,6 +664,15 @@
 	<string name="tailscale_switching_progress">Verbinde…</string>
 	<string name="tailscale_connect_failed_toast">Verbindung fehlgeschlagen. Bitte prüfe deine Tailscale-Verbindung.</string>
 
+	<!-- Server Address Selection -->
+	<string name="server_address_selection_title">Server-Adresse auswählen</string>
+	<string name="server_address_selection_message">Wie möchtest du die Server-Adresse festlegen?</string>
+	<string name="server_address_auto">Automatisch</string>
+	<string name="server_address_manual">Manuell eingeben</string>
+	<string name="fetching_server_url">Hole Server-URL vom Plugin…</string>
+	<string name="server_url_fetch_failed_title">Automatische Adresse fehlgeschlagen</string>
+	<string name="server_url_fetch_failed_message">Die Server-Adresse konnte nicht automatisch abgerufen werden:\n\n%1$s\n\nMöchtest du die Adresse manuell eingeben?</string>
+
 	<!-- Connection Error Dialog -->
 	<string name="server_connection_failed_title">Verbindung fehlgeschlagen</string>
 	<string name="server_connection_failed_message">Die eingegebene Adresse ist nicht erreichbar. Bitte überprüfe die Adresse und versuche es erneut.</string>

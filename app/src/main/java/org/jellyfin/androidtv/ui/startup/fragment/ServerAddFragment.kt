@@ -36,6 +36,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import timber.log.Timber
+import kotlinx.coroutines.runBlocking
 
 class ServerAddFragment : Fragment() {
 	companion object {
@@ -124,18 +125,23 @@ class ServerAddFragment : Fragment() {
 					)
 				}
 
-				is ConnectedState -> parentFragmentManager.commit {
+				is ConnectedState -> {
+					// WICHTIG: Tailscale-Flag SOFORT setzen, bevor wir zum nächsten Screen wechseln!
+					// Sonst wird der Status in den Settings falsch angezeigt.
 					if (useTailscale) {
-						lifecycleScope.launch {
+						runBlocking {
 							serverRepository.setTailscaleEnabled(state.id, true)
+							Timber.d("Set tailscaleEnabled=true for server ${state.id}")
 						}
 					}
-					replace<StartupToolbarFragment>(R.id.content_view)
-					add<ServerFragment>(
-						R.id.content_view,
-						null,
-						bundleOf(ServerFragment.ARG_SERVER_ID to state.id.toString())
-					)
+					parentFragmentManager.commit {
+						replace<StartupToolbarFragment>(R.id.content_view)
+						add<ServerFragment>(
+							R.id.content_view,
+							null,
+							bundleOf(ServerFragment.ARG_SERVER_ID to state.id.toString())
+						)
+					}
 				}
 
 				null -> Unit
@@ -171,32 +177,52 @@ class ServerAddFragment : Fragment() {
 	}
 
 	/**
-	 * Tailscale-Flow mit verbessertem Logging und Auto-Close
+	 * Tailscale-Flow - zeigt Info dass Gerät aus Dashboard entfernt werden sollte, dann Flow starten
 	 */
 	private fun startTailscaleFlow() {
+		Timber.d("Tailscale VPN requested - showing dashboard removal info")
+		// Show info that device should be removed from dashboard first, then continue
+		AlertDialog.Builder(requireContext())
+			.setTitle(R.string.tailscale_already_logged_in_title)
+			.setMessage(R.string.tailscale_already_logged_in_message)
+			.setPositiveButton(R.string.lbl_ok) { _, _ ->
+				// User acknowledged - now start the actual VPN flow
+				continueWithTailscaleFlow()
+			}
+			.setNegativeButton(R.string.lbl_cancel) { _, _ ->
+				setButtonsEnabled(true)
+			}
+			.setCancelable(false)
+			.show()
+	}
+
+	/**
+	 * Führt den eigentlichen Tailscale-Flow aus (VPN Permission, Login-Code, Warten, VPN-Start)
+	 */
+	private fun continueWithTailscaleFlow() {
 		viewLifecycleOwner.lifecycleScope.launch {
 			try {
 				Timber.d("=== TAILSCALE FLOW START ===")
 
-				// 0. Sicherstellen, dass VPN-Permission erteilt ist (zeigt Systemdialog falls nötig)
+				// 1. VPN-Permission sicherstellen
 				val permissionGranted = ensureVpnPermission()
 				if (!permissionGranted) {
 					Timber.w("VPN permission not granted by user")
 					setButtonsEnabled(true)
-					Toast.makeText(requireContext(), "VPN-Berechtigung erforderlich.", Toast.LENGTH_LONG).show()
+					Toast.makeText(requireContext(), R.string.tailscale_vpn_permission_needed, Toast.LENGTH_LONG).show()
 					return@launch
 				}
 
-				// 1. Login-Code anfordern
+				// 2. Login-Code anfordern
 				Timber.d("Step 1: Requesting login code...")
 				val codeResult = TailscaleManager.requestLoginCode()
 				if (codeResult.isFailure) {
 					Timber.e(codeResult.exceptionOrNull(), "Failed to request login code")
 					setButtonsEnabled(true)
 					AlertDialog.Builder(requireContext())
-						.setTitle("Fehler")
-						.setMessage("Login-Code konnte nicht angefordert werden:\n\n${codeResult.exceptionOrNull()?.message}")
-						.setPositiveButton("OK", null)
+						.setTitle(R.string.tailscale_error_title)
+						.setMessage(getString(R.string.tailscale_login_code_failed, codeResult.exceptionOrNull()?.message))
+						.setPositiveButton(R.string.lbl_ok, null)
 						.show()
 					return@launch
 				}
@@ -204,59 +230,35 @@ class ServerAddFragment : Fragment() {
 				val code = codeResult.getOrThrow()
 				Timber.d("Step 1: Got login code: $code")
 
-				// 2. Dialog mit Code (ohne Kopieren-Button)
+				// 3. Dialog mit Code
 				Timber.d("Step 2: Showing dialog with code")
-				val dialogShowTime = System.currentTimeMillis()
 				currentDialog = AlertDialog.Builder(requireContext())
 					.setTitle(R.string.tailscale_connecting_title)
 					.setMessage(getString(R.string.tailscale_connecting_message, code))
 					.setCancelable(false)
 					.show()
 
-				// 3. Warte auf loginFinished Event (VPN startet automatisch nach Login!)
+				// 4. Warte auf loginFinished Event
 				Timber.d("Step 3: Waiting for loginFinished event (max 120 seconds)...")
-
-				// Starte einen separaten Job für regelmäßiges Status-Logging
-				val loggingJob = launch {
-					while (true) {
-						kotlinx.coroutines.delay(5000) // Alle 5 Sekunden
-						val isConnected = TailscaleManager.isConnected()
-						Timber.d("Connection status check: isConnected=$isConnected")
-					}
-				}
-
 				val loginFinished = TailscaleManager.waitUntilLoginFinished(timeoutMs = 120_000L)
-				loggingJob.cancel()
 
-				Timber.d("Step 3: Wait completed. loginFinished=$loginFinished")
-
-				// WICHTIG: Stelle sicher, dass der Dialog mindestens 3 Sekunden sichtbar war
-				val dialogVisibleTime = System.currentTimeMillis() - dialogShowTime
-				if (dialogVisibleTime < 3000L) {
-					val remainingTime = 3000L - dialogVisibleTime
-					Timber.d("Dialog was only visible for ${dialogVisibleTime}ms, waiting additional ${remainingTime}ms")
-					kotlinx.coroutines.delay(remainingTime)
-				}
-
-				// Dialog schließen
 				currentDialog?.dismiss()
 				currentDialog = null
 
 				if (loginFinished) {
 					Timber.d("Step 4: Login finished successfully!")
 
-					// WICHTIG: Nach erfolgreichem Login MUSS der VPN gestartet werden!
-					// Das Tailscale SDK setzt NICHT automatisch WantRunning=true
+					// 5. VPN starten
 					Timber.d("Step 4: Starting VPN after successful login...")
 					val vpnStarted = TailscaleManager.startVpn()
 					if (!vpnStarted) {
 						Timber.w("VPN start failed - permission needed")
 						setButtonsEnabled(true)
-						Toast.makeText(requireContext(), "VPN-Permission benötigt. Bitte erlauben und erneut versuchen.", Toast.LENGTH_LONG).show()
+						Toast.makeText(requireContext(), R.string.tailscale_vpn_permission_required, Toast.LENGTH_LONG).show()
 						return@launch
 					}
 
-					// Warte bis VPN verbunden ist
+					// 6. Warte bis VPN verbunden ist
 					Timber.d("Step 5: Waiting for VPN to connect...")
 					val vpnConnected = TailscaleManager.waitUntilConnected(timeoutMs = 60_000L)
 
@@ -265,7 +267,7 @@ class ServerAddFragment : Fragment() {
 						AlertDialog.Builder(requireContext())
 							.setTitle(R.string.tailscale_connected_title)
 							.setMessage(R.string.tailscale_connected_message)
-							.setPositiveButton("OK") { dialog, _ ->
+							.setPositiveButton(R.string.lbl_ok) { dialog, _ ->
 								dialog.dismiss()
 								showAddressInput()
 							}
@@ -274,9 +276,9 @@ class ServerAddFragment : Fragment() {
 						Timber.e("Step 5: VPN connection timeout!")
 						setButtonsEnabled(true)
 						AlertDialog.Builder(requireContext())
-							.setTitle("VPN Timeout")
-							.setMessage("Tailscale Login war erfolgreich, aber VPN konnte nicht verbunden werden.\n\nPrüfe die Diagnose oder probiere es erneut.")
-							.setPositiveButton("OK") { _, _ ->
+							.setTitle(R.string.tailscale_vpn_timeout_title)
+							.setMessage(R.string.tailscale_vpn_timeout_message)
+							.setPositiveButton(R.string.lbl_ok) { _, _ ->
 								setButtonsEnabled(true)
 							}
 							.show()
@@ -285,13 +287,12 @@ class ServerAddFragment : Fragment() {
 					Timber.e("Step 4: TIMEOUT - loginFinished event never received")
 					setButtonsEnabled(true)
 					AlertDialog.Builder(requireContext())
-						.setTitle("Login Timeout")
-						.setMessage("Der Login konnte nicht abgeschlossen werden.\n\nWurde das Gerät im Tailscale-Dashboard freigeschaltet?\n\nBitte prüfe:\n- Dashboard → Machines → Gerät genehmigen")
-						.setPositiveButton("Erneut versuchen") { _, _ ->
-							// Erlaube erneuten Versuch
+						.setTitle(R.string.tailscale_login_timeout_title)
+						.setMessage(R.string.tailscale_login_timeout_message)
+						.setPositiveButton(R.string.tailscale_retry_button) { _, _ ->
 							setButtonsEnabled(true)
 						}
-						.setNegativeButton("Abbrechen") { _, _ ->
+						.setNegativeButton(R.string.lbl_cancel) { _, _ ->
 							setButtonsEnabled(true)
 						}
 						.show()
@@ -299,13 +300,14 @@ class ServerAddFragment : Fragment() {
 
 				Timber.d("=== TAILSCALE FLOW END ===")
 			} catch (e: Exception) {
-				Timber.e(e, "Tailscale flow failed with exception")
+				Timber.e(e, "Tailscale flow continuation failed with exception")
 				currentDialog?.dismiss()
 				setButtonsEnabled(true)
-				Toast.makeText(requireContext(), "Fehler: ${e.message}", Toast.LENGTH_LONG).show()
+				Toast.makeText(requireContext(), getString(R.string.tailscale_error_generic, e.message), Toast.LENGTH_LONG).show()
 			}
 		}
 	}
+
 
 	/**
 	 * Zeigt den systemweiten VPN-Permission-Dialog an, falls nötig, und wartet auf das Ergebnis.
@@ -328,36 +330,39 @@ class ServerAddFragment : Fragment() {
 		}
 	}
 
+	/**
+	 * Normalisiert eine Server-Adresse und stellt sicher dass sie ein gültiges Format hat.
+	 *
+	 * Unterstützt:
+	 * - Reine IPs: 192.168.1.1 → http://192.168.1.1
+	 * - IPs mit Port: 192.168.1.1:8096 → http://192.168.1.1:8096
+	 * - Hostnamen: server → http://server
+	 * - Hostnamen mit Port: server:8096 → http://server:8096
+	 * - URLs mit Schema: http://server.com → bleibt unverändert
+	 */
+	private fun normalizeServerAddress(address: String): String {
+		var normalized = address.trim()
+
+		// Schema hinzufügen falls nicht vorhanden
+		if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+			normalized = "http://$normalized"
+			Timber.d("normalizeServerAddress: Added http:// schema: $normalized")
+		}
+
+		// Entferne trailing slashes
+		normalized = normalized.trimEnd('/')
+
+		Timber.d("normalizeServerAddress: Final address: '$address' → '$normalized'")
+		return normalized
+	}
+
 	private fun submitAddress() = when {
 		binding.address.text.isNotBlank() -> {
 			val address = binding.address.text.toString().trim()
 
-			// Wenn Tailscale aktiviert ist und die Adresse KEINE IP/URL ist,
-			// versuche sie als Tailscale-Hostname aufzulösen
-			if (useTailscale && !address.contains(".") && !address.contains(":")) {
-				Timber.d("submitAddress: Address '$address' looks like a hostname, trying Tailscale resolution...")
-				lifecycleScope.launch {
-					try {
-						val resolvedIp = TailscaleManager.getPeerIpByHostname(address)
-						if (resolvedIp != null) {
-							Timber.d("submitAddress: Resolved '$address' to $resolvedIp")
-							// Verwende die aufgelöste IP
-							startupViewModel.addServer(resolvedIp)
-						} else {
-							Timber.w("submitAddress: Could not resolve '$address' via Tailscale, using as-is")
-							// Fallback: Verwende die Adresse wie eingegeben
-							startupViewModel.addServer(address)
-						}
-					} catch (e: Exception) {
-						Timber.e(e, "submitAddress: Tailscale resolution failed")
-						// Fallback: Verwende die Adresse wie eingegeben
-						startupViewModel.addServer(address)
-					}
-				}
-			} else {
-				// Normale Adresse (IP oder URL)
-				startupViewModel.addServer(address)
-			}
+			// Use centralized address normalization
+			val normalizedAddress = normalizeServerAddress(address)
+			startupViewModel.addServer(normalizedAddress)
 		}
 		else -> binding.error.setText(R.string.server_field_empty)
 	}

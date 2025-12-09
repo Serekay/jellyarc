@@ -656,8 +656,9 @@
 	<string name="jellyseerr_search_description">Nutze die Fernbedienung, um deine Suchanfrage einzugeben</string>
 
 	<!-- Tailscale switching flow -->
-	<string name="edit_server_address_title">Serveradresse</string>
-	<string name="edit_server_address_message">Gib die neue Adresse für deinen Server ein.</string>
+	<string name="edit_server_address_title">Server-Adresse eingeben</string>
+	<string name="edit_server_address_message">Bitte kontaktiere deinen Server-Administrator, um die genaue Server-URL zu erhalten (inklusive Port falls erforderlich).\n\nBeispiel: http://192.168.1.100:8096</string>
+	<string name="edit_server_address_hint">http://deine-server-adresse:port</string>
 	<string name="connection_status_local">Lokal</string>
 	<string name="connection_status_vpn">VPN</string>
 	<string name="tailscale_switching_progress">Verbinde…</string>
@@ -666,4 +667,25 @@
 	<!-- Connection Error Dialog -->
 	<string name="server_connection_failed_title">Verbindung fehlgeschlagen</string>
 	<string name="server_connection_failed_message">Die eingegebene Adresse ist nicht erreichbar. Bitte überprüfe die Adresse und versuche es erneut.</string>
+
+	<!-- Restart Dialog -->
+	<string name="restart_required_title">Neustart erforderlich</string>
+	<string name="restart_required_message">Die App muss neu gestartet werden, damit die Änderungen wirksam werden.</string>
+	<string name="restart_now">Jetzt neustarten</string>
+
+	<!-- Tailscale Already Logged In Dialog -->
+	<string name="tailscale_already_logged_in_title">Wichtig: Gerät zuerst entfernen</string>
+	<string name="tailscale_already_logged_in_message">Für beste Ergebnisse, entferne bitte dieses Gerät zuerst aus deinem Tailscale Dashboard:\n\n1. Öffne dein Tailscale Dashboard\n2. Finde und entferne dieses Gerät aus der Liste\n3. Klicke OK um mit der Aktivierung fortzufahren\n\nDies stellt eine saubere Verbindung sicher.</string>
+
+	<!-- Tailscale Error Messages -->
+	<string name="tailscale_error_title">Fehler</string>
+	<string name="tailscale_login_code_failed">Login-Code konnte nicht angefordert werden:\n\n%1$s</string>
+	<string name="tailscale_vpn_timeout_title">VPN Timeout</string>
+	<string name="tailscale_vpn_timeout_message">Tailscale Login war erfolgreich, aber VPN konnte nicht verbunden werden.\n\nPrüfe die Diagnose oder probiere es erneut.</string>
+	<string name="tailscale_login_timeout_title">Login Timeout</string>
+	<string name="tailscale_login_timeout_message">Der Login konnte nicht abgeschlossen werden.\n\nWurde das Gerät im Tailscale-Dashboard freigeschaltet?\n\nBitte prüfe:\n- Dashboard → Machines → Gerät genehmigen</string>
+	<string name="tailscale_retry_button">Erneut versuchen</string>
+	<string name="tailscale_vpn_permission_required">VPN-Permission benötigt. Bitte erlauben und erneut versuchen.</string>
+	<string name="tailscale_vpn_permission_needed">VPN-Berechtigung erforderlich.</string>
+	<string name="tailscale_error_generic">Fehler: %1$s</string>
 </resources>

@@ -98,16 +98,130 @@ class EditServerScreen : OptionsFragment() {
 			.show()
 	}
 
-	private fun showAddressInputDialog(server: Server, onAddressSet: (String) -> Unit) {
+	/**
+	 * Normalisiert eine Server-Adresse und stellt sicher dass sie ein gültiges Format hat.
+	 *
+	 * Unterstützt:
+	 * - Reine IPs: 192.168.1.1 → http://192.168.1.1
+	 * - IPs mit Port: 192.168.1.1:8096 → http://192.168.1.1:8096
+	 * - Hostnamen: server → http://server
+	 * - Hostnamen mit Port: server:8096 → http://server:8096
+	 * - URLs mit Schema: http://server.com → bleibt unverändert
+	 */
+	private fun normalizeServerAddress(address: String): String {
+		var normalized = address.trim()
+
+		// Schema hinzufügen falls nicht vorhanden
+		if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+			normalized = "http://$normalized"
+			timber.log.Timber.d("normalizeServerAddress: Added http:// schema: $normalized")
+		}
+
+		// Entferne trailing slashes
+		normalized = normalized.trimEnd('/')
+
+		timber.log.Timber.d("normalizeServerAddress: Final address: '$address' → '$normalized'")
+		return normalized
+	}
+
+	private suspend fun startActivationFlow(server: Server, serverUUID: UUID) {
+		try {
+			// 1. Show progress while requesting code
+			showProgressDialog()
+
+			// 2. Get VPN permission
+			val permissionGranted = ensureVpnPermission()
+			if (!permissionGranted) {
+				hideProgressDialog()
+				Toast.makeText(requireContext(), R.string.tailscale_vpn_permission_needed, Toast.LENGTH_LONG).show()
+				isSwitching = false
+				rebuild()
+				return
+			}
+
+			// 3. Request login code
+			val codeResult = TailscaleManager.requestLoginCode()
+			hideProgressDialog()
+
+			if (codeResult.isFailure) {
+				throw codeResult.exceptionOrNull() ?: Exception("Failed to get login code")
+			}
+			val code = codeResult.getOrThrow()
+
+			// 4. Show code and wait for login
+			currentDialog = AlertDialog.Builder(requireContext())
+				.setTitle(R.string.tailscale_connecting_title)
+				.setMessage(getString(R.string.tailscale_connecting_message, code))
+				.setCancelable(false)
+				.show()
+
+			val loginFinished = TailscaleManager.waitUntilLoginFinished(timeoutMs = 120_000L)
+			currentDialog?.dismiss()
+			currentDialog = null
+
+			if (!loginFinished) {
+				throw Exception("Login timed out. Please make sure to authorize the device in your Tailscale dashboard.")
+			}
+
+			// 5. Start VPN and wait until connected
+			showProgressDialog()
+			TailscaleManager.startVpn()
+			val vpnConnected = TailscaleManager.waitUntilConnected(timeoutMs = 60_000L)
+			hideProgressDialog()
+
+			if (!vpnConnected) {
+				throw Exception("VPN connection timed out after login.")
+			}
+
+			// 6. Ask for new address and validate BEFORE saving
+			showAddressInputDialog(
+				server = server,
+				useTailscale = true,  // VPN wird aktiviert
+				onCancel = {
+					// User cancelled address input
+					isSwitching = false
+					rebuild()
+				},
+				onAddressSet = { newAddress ->
+					// Validation happens in showAddressInputDialog
+					// Only called if validation succeeds
+					startupViewModel.setServerAddress(serverUUID, newAddress)
+					startupViewModel.setTailscaleEnabled(serverUUID, true)
+					isSwitching = false
+					showRestartDialog()
+				})
+
+		} catch (e: Exception) {
+			currentDialog?.dismiss()
+			currentDialog = null
+			hideProgressDialog()
+			Toast.makeText(requireContext(), getString(R.string.tailscale_error_generic, e.message), Toast.LENGTH_LONG).show()
+			isSwitching = false
+			rebuild()
+		}
+	}
+
+	private fun showAddressInputDialog(
+		server: Server,
+		useTailscale: Boolean = server.tailscaleEnabled,
+		onCancel: () -> Unit = {},
+		onAddressSet: (String) -> Unit
+	) {
 		val editText = EditText(requireContext()).apply {
-			setText(server.address)
+			hint = getString(R.string.edit_server_address_hint)
+			// Leave empty - user must enter the full address from admin
 		}
 		val dialog = AlertDialog.Builder(requireContext())
 			.setTitle(R.string.edit_server_address_title)
 			.setMessage(R.string.edit_server_address_message)
 			.setView(editText)
 			.setPositiveButton(R.string.lbl_ok, null) // Set to null. We override the handler later.
-			.setNegativeButton(R.string.lbl_cancel, null)
+			.setNegativeButton(R.string.lbl_cancel) { _, _ ->
+				onCancel()
+			}
+			.setOnCancelListener {
+				onCancel()
+			}
 			.create()
 
 		dialog.setOnShowListener {
@@ -124,16 +238,21 @@ class EditServerScreen : OptionsFragment() {
 				showProgressDialog()
 
 				lifecycleScope.launch {
+					// Use centralized address normalization
+					val addressToTest = normalizeServerAddress(newAddress)
+
+					// Validiere die Adresse (jellyfin.discovery.getAddressCandidates macht schon Smart-Parsing)
 					val isValid = try {
-						startupViewModel.testServerAddress(newAddress)
+						startupViewModel.testServerAddress(addressToTest)
 					} catch (e: Exception) {
+						timber.log.Timber.e(e, "Address validation failed")
 						false
 					}
 
 					hideProgressDialog()
 
 					if (isValid) {
-						onAddressSet(newAddress)
+						onAddressSet(addressToTest)
 						dialog.dismiss()
 					} else {
 						AlertDialog.Builder(requireContext())
@@ -200,59 +319,23 @@ class EditServerScreen : OptionsFragment() {
 						isSwitching = true
 						if (enabled) {
 							// ### TAILSCALE ACTIVATION FLOW ###
-							lifecycleScope.launch {
-								try {
-									// 1. Get VPN permission
-									val permissionGranted = ensureVpnPermission()
-									if (!permissionGranted) {
-										Toast.makeText(requireContext(), "VPN permission is required.", Toast.LENGTH_LONG).show()
-										isSwitching = false
-										rebuild()
-										return@launch
+							// Show info that device should be removed from dashboard first, then continue
+							timber.log.Timber.d("Tailscale activation requested - showing dashboard removal info")
+							AlertDialog.Builder(requireContext())
+								.setTitle(R.string.tailscale_already_logged_in_title)
+								.setMessage(R.string.tailscale_already_logged_in_message)
+								.setPositiveButton(R.string.lbl_ok) { _, _ ->
+									// User acknowledged - now start the VPN activation flow
+									lifecycleScope.launch {
+										startActivationFlow(server, serverUUID)
 									}
-
-									// 2. Request login code
-									val codeResult = TailscaleManager.requestLoginCode()
-									if (codeResult.isFailure) {
-										throw codeResult.exceptionOrNull() ?: Exception("Failed to get login code")
-									}
-									val code = codeResult.getOrThrow()
-
-									// 3. Show code and wait for login
-									currentDialog = AlertDialog.Builder(requireContext())
-										.setTitle(R.string.tailscale_connecting_title)
-										.setMessage(getString(R.string.tailscale_connecting_message, code))
-										.setCancelable(false)
-										.show()
-
-									val loginFinished = TailscaleManager.waitUntilLoginFinished(timeoutMs = 120_000L)
-									currentDialog?.dismiss()
-
-									if (!loginFinished) {
-										throw Exception("Login timed out. Please make sure to authorize the device in your Tailscale dashboard.")
-									}
-
-									// 4. Start VPN and wait until connected
-									TailscaleManager.startVpn()
-									val vpnConnected = TailscaleManager.waitUntilConnected(timeoutMs = 60_000L)
-									if (!vpnConnected) {
-										throw Exception("VPN connection timed out after login.")
-									}
-									
-									// 5. Ask for new address
-									showAddressInputDialog(server) { newAddress ->
-										startupViewModel.setServerAddress(serverUUID, newAddress)
-										startupViewModel.setTailscaleEnabled(serverUUID, true)
-										showRestartDialog()
-									}
-
-								} catch (e: Exception) {
-									currentDialog?.dismiss()
-									Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
+								}
+								.setNegativeButton(R.string.lbl_cancel) { _, _ ->
 									isSwitching = false
 									rebuild()
 								}
-							}
+								.setCancelable(false)
+								.show()
 						} else {
 							// ### TAILSCALE DEACTIVATION FLOW ###
 							lifecycleScope.launch {
@@ -260,12 +343,27 @@ class EditServerScreen : OptionsFragment() {
 									showProgressDialog()
 									TailscaleManager.stopVpn()
 									hideProgressDialog()
-									showAddressInputDialog(server) { newAddress ->
-										startupViewModel.setServerAddress(serverUUID, newAddress)
-										startupViewModel.setTailscaleEnabled(serverUUID, false)
-										showRestartDialog()
-									}
-								} finally {
+
+									// Ask for new address and validate BEFORE saving
+									showAddressInputDialog(
+										server = server,
+										useTailscale = false,  // VPN wird deaktiviert
+										onCancel = {
+											// User cancelled address input
+											isSwitching = false
+											rebuild()
+										},
+										onAddressSet = { newAddress ->
+											// Validation happens in showAddressInputDialog
+											// Only called if validation succeeds
+											startupViewModel.setServerAddress(serverUUID, newAddress)
+											startupViewModel.setTailscaleEnabled(serverUUID, false)
+											isSwitching = false
+											showRestartDialog()
+										})
+								} catch (e: Exception) {
+									hideProgressDialog()
+									Toast.makeText(requireContext(), getString(R.string.tailscale_error_generic, e.message), Toast.LENGTH_LONG).show()
 									isSwitching = false
 									rebuild()
 								}
@@ -273,64 +371,6 @@ class EditServerScreen : OptionsFragment() {
 						}
 					}
 					default { false }
-				}
-			}
-
-			action {
-				setTitle(R.string.tailscale_login_code_title)
-				setContent(R.string.tailscale_login_code_summary)
-				onActivate = {
-					if (!server.tailscaleEnabled) {
-						Toast.makeText(requireContext(), R.string.tailscale_enable_first, Toast.LENGTH_SHORT).show()
-					} else {
-						lifecycleScope.launch {
-							val result = TailscaleManager.requestLoginCode()
-							val message = result.fold(
-								onSuccess = { code -> getString(R.string.tailscale_setup_toast_code, code) },
-								onFailure = { it.message ?: getString(R.string.tailscale_setup_toast_error) }
-							)
-							requireContext().let { ctx ->
-								Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
-							}
-						}
-					}
-				}
-			}
-
-			action {
-				setTitle(R.string.tailscale_connect_title)
-				setContent(R.string.tailscale_connect_summary)
-				onActivate = {
-					if (!server.tailscaleEnabled) {
-						Toast.makeText(requireContext(), R.string.tailscale_enable_first, Toast.LENGTH_SHORT).show()
-					} else {
-						lifecycleScope.launch {
-							TailscaleManager.startVpn()
-						}
-					}
-				}
-			}
-
-			action {
-				setTitle(R.string.tailscale_disconnect_title)
-				setContent(R.string.tailscale_disconnect_summary)
-				onActivate = {
-					TailscaleManager.stopVpn()
-					Toast.makeText(requireContext(), R.string.tailscale_disconnect_done, Toast.LENGTH_SHORT).show()
-				}
-			}
-
-			action {
-				setTitle(R.string.tailscale_reset_auth_title)
-				setContent(R.string.tailscale_reset_auth_summary)
-				onActivate = {
-					lifecycleScope.launch {
-						val msg = TailscaleManager.resetAuthPublic().fold(
-							onSuccess = { getString(R.string.tailscale_reset_auth_success) },
-							onFailure = { it.message ?: getString(R.string.tailscale_setup_toast_error) }
-						)
-						Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
-					}
 				}
 			}
 		}

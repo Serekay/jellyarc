@@ -292,11 +292,16 @@ private data class JellyseerrUser(
 	private suspend fun chooseBestBase(defaultBase: String, tailscaleBase: String?): String {
 		val tsBase = tailscaleBase?.takeIf { it.isNotBlank() } ?: return defaultBase
 
-		// Use Tailscale base only when the server is flagged for Tailscale AND
-		// the current Jellyfin connection host is a Tailscale host.
-		val jfHost = apiClient.baseUrl?.toHttpUrlOrNull()?.host
-		val preferTailscale = tailscaleEnabledForCurrentServer() && jfHost != null && looksLikeTailscaleHost(jfHost)
-		return if (preferTailscale) tsBase else defaultBase
+		// Use Tailscale base when the server is flagged for Tailscale
+		// We trust the tailscaleEnabled flag - if VPN is active, use the Tailscale endpoint
+		val preferTailscale = tailscaleEnabledForCurrentServer()
+		return if (preferTailscale) {
+			Timber.d("Using Tailscale Jellyseerr endpoint: $tsBase")
+			tsBase
+		} else {
+			Timber.d("Using local Jellyseerr endpoint: $defaultBase")
+			defaultBase
+		}
 	}
 
 	private suspend fun tailscaleEnabledForCurrentServer(): Boolean {
@@ -348,28 +353,18 @@ private fun mapCompanyDtoToModel(dto: JellyseerrCompanyDto): JellyseerrCompany =
 
 	private fun getConfig(): Config? {
 		cachedConfig?.let { current ->
-			val normalized = normalizeBaseUrl(current.baseUrl).trimEnd('/')
-			val serverTs = runBlocking { tailscaleEnabledForCurrentServer() }
-			val host = normalized.toHttpUrlOrNull()?.host
-			val hostIsTs = host?.let { looksLikeTailscaleHost(it) } == true
-			val jfHost = apiClient.baseUrl?.toHttpUrlOrNull()?.host
-			val jfIsTs = jfHost?.let { looksLikeTailscaleHost(it) } == true
-
-			// Refresh from bridge if the cached base is TS but Jellyfin host is not TS (likely local),
-			// or vice versa.
-			val shouldRefresh = serverTs && (
-				(jfIsTs && !hostIsTs) ||
-				(!jfIsTs && hostIsTs)
-			)
-
-			if (shouldRefresh) {
-				val refreshed = runBlocking { fetchBridgeConfig().getOrNull() }
-				if (refreshed != null) {
-					cachedConfig = refreshed
-					return refreshed
-				}
+			// Always refresh config from bridge plugin to ensure we use the correct endpoint
+			// based on current Tailscale status. The plugin provides both endpoints,
+			// and chooseBestBase() will select the right one.
+			val refreshed = runBlocking { fetchBridgeConfig().getOrNull() }
+			if (refreshed != null) {
+				cachedConfig = refreshed
+				Timber.d("Refreshed Jellyseerr config from bridge: ${refreshed.baseUrl}")
+				return refreshed
 			}
 
+			// Fallback: use cached config if bridge refresh fails
+			val normalized = normalizeBaseUrl(current.baseUrl).trimEnd('/')
 			if (normalized != current.baseUrl) {
 				Config(normalized, current.apiKey).also { cachedConfig = it }
 				return cachedConfig

@@ -75,3 +75,4 @@ After authentication, the app handles the VPN connection automatically. You only
 - Keep the server plugin updated.
 - “App not installed” is often low storage; free space and retry.
 - “Unknown sources” may need to be enabled per app/source on some TVs.
+- Sometimes shitty Android Tv does not install app or throws an time out error when you request an Tailscale Code. simply restart the Tv.... known error but that is Android Tv 2025 -.-

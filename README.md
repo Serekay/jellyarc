@@ -2,13 +2,9 @@
 
 Android TV client for Jellyfin with built-in Jellyseerr integration and Tailscale VPN support.
 
-## Quick Install on TV
+## What is Jellyarc?
 
-Open a browser on your TV and go to:
-
-**https://serekay.github.io/jellyarc**
-
-The download starts automatically. Then open the APK and install.
+Jellyarc lets you browse the Jellyseerr discovery catalog and request new content directly from your TV. It also includes a built-in Tailscale VPN client for secure remote access without opening ports.
 
 ---
 
@@ -20,57 +16,81 @@ The download starts automatically. Then open the APK and install.
 
 ---
 
-## Features
+## Installation
 
-- Jellyseerr Discover & Request integration
-- Built-in Tailscale VPN client
-- Automatic in-app updates
+### On your TV (easiest)
+
+1. Install a browser on your TV (e.g. **BrowseHere** from Play Store)
+2. Open the browser and go to: **serekay.github.io/jellyarc**
+3. The APK download starts automatically
+4. Open the downloaded APK and install
+5. If prompted, enable "Unknown sources" for the browser app
+
+### From your PC
+
+1. Download the APK from [GitHub Releases](https://github.com/Serekay/jellyarc/releases)
+2. Transfer to your TV via:
+   - USB stick
+   - FTP (e.g. with CX File Explorer on TV)
+   - "Send Files to TV" app
+3. Open the APK on your TV and install
 
 ---
 
-## Installation Options
+## Setup
 
-### Option A: Direct download on TV (easiest)
-1. Open a browser on the TV (e.g. **BrowseHere**)
-2. Go to: `serekay.github.io/jellyarc`
-3. Download starts automatically
-4. Open the APK and install (enable "Unknown sources" if prompted)
-
-### Option B: USB stick / FTP transfer
-1. Download the APK from [GitHub Releases](https://github.com/Serekay/jellyarc/releases)
-2. Transfer to TV via USB stick or FTP (e.g. CX File Explorer)
-3. Open the APK on TV and install
-
-### After installation
-1. Start the app
-2. Connect to your Jellyfin server
-3. Done
+1. Start Jellyarc
+2. Enter your Jellyfin server address
+3. Login with your Jellyfin credentials
+4. Done - enjoy Jellyseerr discover & request features
 
 ---
 
 ## Remote Access with Tailscale
 
-This app includes an integrated Tailscale client for secure remote access without opening ports.
+Want to access your server from anywhere? Jellyarc has Tailscale built-in.
 
-### Setup
 1. When adding a server, choose "Connect via Tailscale"
-2. The app shows a code - authorize it in your Tailscale admin dashboard
+2. The app shows a code - authorize it at [Tailscale Admin](https://login.tailscale.com/admin/machines)
 3. Use your server's Tailscale address (e.g. `http://100.x.x.x:8096`)
 
-You can also switch existing servers to Tailscale in Settings -> Edit Server.
+You can switch existing servers to Tailscale anytime: Settings -> Edit Server
 
 ---
 
-## In-App Updates
+## Updates
 
-The app checks for updates on startup and can update itself. When prompted:
-1. Allow "Install unknown apps" for Jellyarc
-2. Confirm the installation
+Jellyarc updates itself automatically. When a new version is available:
+1. The app shows an update prompt
+2. Allow "Install unknown apps" for Jellyarc (first time only)
+3. Confirm the installation
 
 ---
 
 ## Troubleshooting
 
-- **"App not installed"**: Check free storage on TV, free up space and retry
-- **"Unknown sources"**: Enable per app in TV security settings
-- **Tailscale timeout**: Restart the TV and try again (known Android TV bug)
+| Problem | Solution |
+|---------|----------|
+| "App not installed" | Free up storage on your TV and retry |
+| "Unknown sources" error | Enable in TV Settings -> Security for each app |
+| Tailscale code timeout | Restart the TV and try again |
+| Download not starting | Use the manual link on the download page |
+
+---
+
+## Build from Source
+
+Requirements: Java 21, Android SDK
+
+```powershell
+# Build debug APK
+./gradlew assembleDebug
+
+# Build release APK with version
+.\release.ps1 -Version 1.2.3
+
+# Build and create GitHub release
+.\release.ps1 -Version 1.2.3 -Changelog "Your changes" -Release
+```
+
+The release script builds the APK, copies it to `dist/`, and optionally uploads to GitHub Releases.
